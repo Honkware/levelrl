@@ -119,6 +119,12 @@ def scan(month: str, keep: float = KEEP, seed: int = 0) -> Path:
     return out
 
 
+def blitz(tc: str) -> bool:
+    # Lichess's own speed rule (base + 40 x increment, 180-479 s). Maia-3 trained and was tested on blitz only.
+    base, _, inc = tc.partition("+")
+    return base.isdigit() and inc.isdigit() and 180 <= int(base) + 40 * int(inc) < 480
+
+
 def band(elo: int) -> int | None:
     return next((b for b in BANDS if abs(elo - b) <= HALF), None)
 
@@ -130,7 +136,7 @@ def build(months: tuple[str, ...] = MONTHS, seed: int = 0) -> None:
     for m in months:
         d = scan(m, seed=seed)
         counts.update(json.loads(gzip.decompress((d / "counts.json.gz").read_bytes())))
-        by_month[m] = [json.loads(line) for line in gzip.open(d / "rows.jsonl.gz", "rt")]
+        by_month[m] = [r for line in gzip.open(d / "rows.jsonl.gz", "rt") if blitz((r := json.loads(line))["tc"])]
     rng = random.Random(seed)
     calib, fid = [], {b: [] for b in BANDS}
     # Equal shares per month, so both years carry the same weight.
@@ -150,7 +156,7 @@ def build(months: tuple[str, ...] = MONTHS, seed: int = 0) -> None:
         write(out / f"fid_{b}.jsonl.gz", rows)
     (out / "manifest.json").write_text(json.dumps({
         "cutoff": CUTOFF, "months": months, "seed": seed, "bands": BANDS, "half": HALF, "min_games": MIN_GAMES,
-        "skip_plies": SKIP_PLIES, "min_clock": MIN_CLOCK, "keep": KEEP, "calib": len(calib),
+        "skip_plies": SKIP_PLIES, "min_clock": MIN_CLOCK, "keep": KEEP, "speed": "blitz", "calib": len(calib),
         "fid": {b: len(r) for b, r in fid.items()},
     }, indent=1))
 

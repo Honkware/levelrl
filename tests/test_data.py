@@ -88,6 +88,11 @@ def test_a_dropped_stream_does_not_mark_the_month_done(tmp_path, monkeypatch):
     assert not (tmp_path / "scan" / "2026-09" / "done").exists()
 
 
+def test_only_blitz_time_controls_are_blitz():
+    for tc, want in (("180+0", True), ("300+3", True), ("600+0", False), ("60+0", False), ("120+1", False), ("120+2", True), ("-", False)):
+        assert data.blitz(tc) is want, tc
+
+
 def test_the_mover_and_opponent_ratings_follow_the_side_to_move():
     for seed in range(20):
         row = data.pick(game(), random.Random(seed))

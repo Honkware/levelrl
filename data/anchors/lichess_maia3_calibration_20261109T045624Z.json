@@ -1,0 +1,335 @@
+{
+ "at": "20261109T045624Z",
+ "bots": {
+  "600": {
+   "bullet": {
+    "rating": 1399,
+    "rd": 57,
+    "prog": -3,
+    "games": 182,
+    "prov": null
+   },
+   "blitz": {
+    "rating": 890,
+    "rd": 45,
+    "prog": 5,
+    "games": 996,
+    "prov": null
+   },
+   "rapid": {
+    "rating": 1011,
+    "rd": 45,
+    "prog": 1,
+    "games": 1967,
+    "prov": null
+   },
+   "classical": {
+    "rating": 1155,
+    "rd": 45,
+    "prog": -4,
+    "games": 425,
+    "prov": null
+   }
+  },
+  "800": {
+   "bullet": {
+    "rating": 1560,
+    "rd": 51,
+    "prog": -17,
+    "games": 259,
+    "prov": null
+   },
+   "blitz": {
+    "rating": 1111,
+    "rd": 45,
+    "prog": 11,
+    "games": 727,
+    "prov": null
+   },
+   "rapid": {
+    "rating": 1180,
+    "rd": 45,
+    "prog": -28,
+    "games": 1875,
+    "prov": null
+   },
+   "classical": {
+    "rating": 1245,
+    "rd": 45,
+    "prog": -10,
+    "games": 216,
+    "prov": null
+   }
+  },
+  "1000": {
+   "bullet": {
+    "rating": 1658,
+    "rd": 50,
+    "prog": 16,
+    "games": 257,
+    "prov": null
+   },
+   "blitz": {
+    "rating": 1289,
+    "rd": 45,
+    "prog": -9,
+    "games": 690,
+    "prov": null
+   },
+   "rapid": {
+    "rating": 1229,
+    "rd": 45,
+    "prog": -2,
+    "games": 1527,
+    "prov": null
+   },
+   "classical": {
+    "rating": 1540,
+    "rd": 51,
+    "prog": -22,
+    "games": 125,
+    "prov": null
+   }
+  },
+  "1200": {
+   "bullet": {
+    "rating": 1777,
+    "rd": 45,
+    "prog": 11,
+    "games": 709,
+    "prov": null
+   },
+   "blitz": {
+    "rating": 1436,
+    "rd": 51,
+    "prog": 9,
+    "games": 172,
+    "prov": null
+   },
+   "rapid": {
+    "rating": 1465,
+    "rd": 45,
+    "prog": 34,
+    "games": 785,
+    "prov": null
+   },
+   "classical": {
+    "rating": 1614,
+    "rd": 48,
+    "prog": 43,
+    "games": 270,
+    "prov": null
+   }
+  },
+  "1400": {
+   "bullet": {
+    "rating": 1896,
+    "rd": 60,
+    "prog": -31,
+    "games": 92,
+    "prov": null
+   },
+   "blitz": {
+    "rating": 1513,
+    "rd": 50,
+    "prog": 14,
+    "games": 389,
+    "prov": null
+   },
+   "rapid": {
+    "rating": 1616,
+    "rd": 45,
+    "prog": 21,
+    "games": 497,
+    "prov": null
+   },
+   "classical": {
+    "rating": 1663,
+    "rd": 48,
+    "prog": -16,
+    "games": 259,
+    "prov": null
+   }
+  },
+  "1600": {
+   "bullet": {
+    "rating": 2025,
+    "rd": 49,
+    "prog": 1,
+    "games": 234,
+    "prov": null
+   },
+   "blitz": {
+    "rating": 1695,
+    "rd": 45,
+    "prog": 5,
+    "games": 668,
+    "prov": null
+   },
+   "rapid": {
+    "rating": 1640,
+    "rd": 47,
+    "prog": -18,
+    "games": 178,
+    "prov": null
+   },
+   "classical": {
+    "rating": 1817,
+    "rd": 48,
+    "prog": 27,
+    "games": 150,
+    "prov": null
+   }
+  },
+  "1800": {
+   "bullet": {
+    "rating": 2094,
+    "rd": 56,
+    "prog": 20,
+    "games": 102,
+    "prov": null
+   },
+   "blitz": {
+    "rating": 1800,
+    "rd": 48,
+    "prog": -30,
+    "games": 234,
+    "prov": null
+   },
+   "rapid": {
+    "rating": 1632,
+    "rd": 82,
+    "prog": -63,
+    "games": 52,
+    "prov": null
+   },
+   "classical": {
+    "rating": 1793,
+    "rd": 57,
+    "prog": -28,
+    "games": 64,
+    "prov": null
+   }
+  },
+  "2000": {
+   "bullet": {
+    "rating": 2256,
+    "rd": 84,
+    "prog": 7,
+    "games": 67,
+    "prov": null
+   },
+   "blitz": {
+    "rating": 2007,
+    "rd": 52,
+    "prog": 10,
+    "games": 82,
+    "prov": null
+   },
+   "rapid": {
+    "rating": 2012,
+    "rd": 47,
+    "prog": 15,
+    "games": 134,
+    "prov": null
+   },
+   "classical": {
+    "rating": 2119,
+    "rd": 60,
+    "prog": -29,
+    "games": 150,
+    "prov": null
+   }
+  },
+  "2200": {
+   "bullet": {
+    "rating": 2355,
+    "rd": 128,
+    "prog": 17,
+    "games": 47,
+    "prov": true
+   },
+   "blitz": {
+    "rating": 2263,
+    "rd": 122,
+    "prog": -96,
+    "games": 35,
+    "prov": true
+   },
+   "rapid": {
+    "rating": 2132,
+    "rd": 112,
+    "prog": -86,
+    "games": 36,
+    "prov": true
+   },
+   "classical": {
+    "rating": 1672,
+    "rd": 275,
+    "prog": 0,
+    "games": 9,
+    "prov": true
+   }
+  },
+  "2400": {
+   "bullet": {
+    "rating": 2405,
+    "rd": 76,
+    "prog": -58,
+    "games": 45,
+    "prov": null
+   },
+   "blitz": {
+    "rating": 2159,
+    "rd": 132,
+    "prog": -24,
+    "games": 19,
+    "prov": true
+   },
+   "rapid": {
+    "rating": 2211,
+    "rd": 129,
+    "prog": 50,
+    "games": 26,
+    "prov": true
+   },
+   "classical": {
+    "rating": 2008,
+    "rd": 379,
+    "prog": 0,
+    "games": 10,
+    "prov": true
+   }
+  },
+  "2600": {
+   "bullet": {
+    "rating": 2329,
+    "rd": 135,
+    "prog": 131,
+    "games": 75,
+    "prov": true
+   },
+   "blitz": {
+    "rating": 2218,
+    "rd": 110,
+    "prog": 14,
+    "games": 119,
+    "prov": true
+   },
+   "rapid": {
+    "rating": 2238,
+    "rd": 138,
+    "prog": -43,
+    "games": 44,
+    "prov": true
+   },
+   "classical": {
+    "rating": 2212,
+    "rd": 130,
+    "prog": -107,
+    "games": 28,
+    "prov": true
+   }
+  }
+ }
+}

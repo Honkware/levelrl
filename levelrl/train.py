@@ -232,11 +232,22 @@ class Trainer:
                                "clip_high": self.st["clip_high"]})
         progress.event(self.name, f"{why}: back to update {self.st['update']}, lr {self.st['lr']:.1e}")
 
+    def evaluate(self, tag: str, on_eval):
+        if any(e.get("tag") == tag for e in self.st["evals"]):
+            return
+        self.save(tag=tag)
+        self.st["evals"].append(on_eval(self, tag))
+        self.save()
+
     def run(self, openings, on_eval) -> dict:
         a = arena.Arena(self.cfg, self.mover, self.feed_fn(openings), self.name, me=lambda s: f"policy@{self.T}")
         groups: dict[str, list] = {}
         ready = []
         t0 = time.time()
+        if not (self.out / "last.pt").exists():
+            self.save()  # recover() needs something to go back to before the first periodic checkpoint
+        if self.st["update"] in EVAL_AT:
+            self.evaluate(str(self.st["update"]), on_eval)  # a run that died inside this eval resumes right here
         while self.st["games"] < self.games:
             for g in a.step():
                 groups.setdefault(g["group"], []).append(g)
@@ -265,11 +276,7 @@ class Trainer:
             if u % CKPT_EVERY == 0:
                 self.save()
             if u in EVAL_AT:
-                self.save(tag=str(u))
-                self.st["evals"].append(on_eval(self, str(u)))
-                self.save()
-        self.save(tag="final")
-        self.st["evals"].append(on_eval(self, "final"))
-        self.save()
+                self.evaluate(str(u), on_eval)
+        self.evaluate("final", on_eval)
         (self.out / "train_log.json").write_text(json.dumps({k: v for k, v in self.st.items()}, indent=1))
         return self.st

@@ -7,7 +7,7 @@ from multiprocessing import Pool
 import chess
 import torch
 
-from levelrl import ladder, maia
+from levelrl import ladder, maia, progress
 
 # Maia against the Stockfish rungs, many games at once. Maia's moves are one batched forward over every game where
 # it is to move, while the rungs' moves for the other games run in a process pool alongside it.
@@ -35,12 +35,13 @@ def sample(logits: torch.Tensor, temp: float, top_p: float, gen: torch.Generator
 
 
 def play(cfg, model, policy: dict, opponents: list[str], openings: list[list[str]], seed: int = 0,
-         procs: int = 10, bsz: int = 256, log=lambda s: print(s, flush=True)) -> list[dict]:
+         procs: int = 10, bsz: int = 256, name: str = "gauntlet",
+         log=lambda s: print(s, flush=True)) -> list[dict]:
     # policy: self_elo, oppo_elo, history, temp, top_p. One game per (opponent, opening, colour).
     rng = random.Random(seed)
     gen = torch.Generator().manual_seed(seed)
     todo = [(o, op, white, rng.getrandbits(31)) for o in opponents for op in openings for white in (True, False)]
-    live, done = [], []
+    live, done, total = [], [], len(todo)
     with Pool(procs) as pool:
         while todo or live:
             while todo and len(live) < bsz:
@@ -66,6 +67,7 @@ def play(cfg, model, policy: dict, opponents: list[str], openings: list[list[str
                     s = {"1-0": 1.0, "0-1": 0.0}.get(b.result(claim_draw=True), 0.5)
                     done.append({"opp": g["opp"], "white": g["white"], "score": s if g["white"] else 1 - s,
                                  "plies": b.ply(), "moves": [m.uci() for m in b.move_stack]})
+                    progress.tick(name, len(done), total, "games")
                     if len(done) % 100 == 0:
                         log(f"{len(done)} games")
                 else:

@@ -86,11 +86,12 @@ def infer(device: str = "cpu", bsz: int = 512) -> dict:
     # to the human's real rating, and the sampling temperature. top-p is judged by how often a played move falls
     # outside the nucleus, since a move outside it has zero probability under that setting.
     import torch
-    from levelrl import maia
+    from levelrl import maia, progress
     cfg, model = maia.load(device)
     temps = (0.25, 0.5, 0.75, 1.0, 1.25, 1.5)
     res = {}
-    for d in DIALS:
+    for i, d in enumerate(DIALS):
+        progress.tick("bots", i, len(DIALS), "dials", force=True)
         pos = bot_positions(d)
         if not pos:
             continue
@@ -118,12 +119,64 @@ def infer(device: str = "cpu", bsz: int = 512) -> dict:
         res[d] = row
         print(d, json.dumps(row)[:300], flush=True)
     (ROOT / "bot_settings.json").write_text(json.dumps(res, indent=1))
+    progress.tick("bots", len(DIALS), len(DIALS), "dials", force=True)
     return res
+
+
+def fit_sampling(device: str = "cpu", bsz: int = 512, eps: float = 1e-4) -> dict:
+    # infer() showed history on and a nucleus near 0.95, and a nucleus also pulls a temperature-only fit low, so
+    # temperature and top-p are fitted together under maia3's own sampler (nucleus taken after temperature, top move
+    # always kept). A played move outside the nucleus would be impossible, so it scores eps instead of -inf and
+    # the miss count is kept alongside.
+    import torch
+    from levelrl import maia, progress
+    cfg, model = maia.load(device)
+    temps = [round(0.6 + 0.05 * i, 2) for i in range(13)]
+    tops = (0.9, 0.92, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99, 1.0)
+    res, pooled = {}, {}
+    for k, d in enumerate(DIALS):
+        progress.tick("sampling", k, len(DIALS), "dials", force=True)
+        pos = bot_positions(d)
+        ll = {(t, q): 0.0 for t in temps for q in tops}
+        miss = {(t, q): 0 for t in temps for q in tops}
+        for i in range(0, len(pos), bsz):
+            chunk = pos[i:i + bsz]
+            boards = [b for b, _, _ in chunk]
+            logits, _ = maia.forward(cfg, model, boards, [d] * len(chunk), [d] * len(chunk), history=True)
+            idx = torch.tensor([maia.MOVE_IDX[mv.uci() if b.turn else maia.mirror_move(mv.uci())]
+                                for b, mv, _ in chunk], device=logits.device)
+            for t in temps:
+                p = torch.softmax(logits / t, -1)
+                need = nucleus_need(p, idx)
+                pm = p.gather(1, idx[:, None])[:, 0]
+                sp = p.sort(-1, descending=True).values
+                cs = sp.cumsum(-1)
+                for q in tops:
+                    keep = cs <= q
+                    keep[:, 0] = True
+                    z = (sp * keep).sum(-1)
+                    ok = need <= q
+                    ll[t, q] += float(torch.where(ok, (pm / z).log(), torch.full_like(pm, eps).log()).sum())
+                    miss[t, q] += int((~ok).sum())
+        n = len(pos)
+        best = max(ll, key=ll.get)
+        res[d] = {"moves": n, "best": {"temp": best[0], "top_p": best[1], "nll": -ll[best] / n,
+                                       "miss": miss[best] / n},
+                  "grid": {f"{t},{q}": {"nll": -ll[t, q] / n, "miss": miss[t, q] / n} for t, q in ll}}
+        for key, v in ll.items():
+            pooled[key] = pooled.get(key, 0.0) + v
+        print(d, json.dumps(res[d]["best"]), flush=True)
+    best = max(pooled, key=pooled.get)
+    out = {"history": True, "oppo": "dial", "eps": eps, "pooled": {"temp": best[0], "top_p": best[1]}, "dials": res}
+    (ROOT / "bot_sampling.json").write_text(json.dumps(out, indent=1))
+    progress.tick("sampling", len(DIALS), len(DIALS), "dials", force=True)
+    print("pooled", out["pooled"])
+    return out
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["snapshot", "games", "infer"])
+    ap.add_argument("cmd", choices=["snapshot", "games", "infer", "fit"])
     ap.add_argument("--n", type=int, default=200)
     ap.add_argument("--device", default="cpu")
     a = ap.parse_args()
@@ -131,6 +184,8 @@ if __name__ == "__main__":
         print(snapshot())
     elif a.cmd == "infer":
         infer(a.device)
+    elif a.cmd == "fit":
+        fit_sampling(a.device)
     else:
         for d in DIALS:
             p = games(d, a.n)

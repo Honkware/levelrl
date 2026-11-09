@@ -11,7 +11,7 @@ from pathlib import Path
 import chess
 import chess.engine
 
-from levelrl import openings
+from levelrl import openings, progress
 
 # Stockfish 19 rungs. Its strength limit stops at 1320, so the rungs below that are Skill 0 playing a uniformly
 # random legal move with probability p, as the spec asks. One thread, a small fixed hash and a fixed move time,
@@ -140,6 +140,7 @@ def run(per_pair: int = 200, span: int = SPAN, procs: int = 10, seed: int = 1) -
     with Pool(procs) as p:
         for k, g in enumerate(p.imap_unordered(_job, jobs, chunksize=4)):
             games.append(g)
+            progress.tick("ladder", k + 1, len(jobs), "games")
             if k % 200 == 0:
                 print(k, "/", len(jobs), flush=True)
     OUT.parent.mkdir(exist_ok=True)

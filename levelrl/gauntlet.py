@@ -2,23 +2,34 @@ from __future__ import annotations
 
 import json
 import random
-from multiprocessing import Pool
 
 import chess
 import torch
 
-from levelrl import ladder, maia, progress
+from levelrl import arena, maia, progress
 
 # Maia against the Stockfish rungs, many games at once. Maia's moves are one batched forward over every game where
 # it is to move, while the rungs' moves for the other games run in a process pool alongside it.
 
 
-def _sf(args):
-    name, moves, seed = args
-    b = chess.Board()
-    for m in moves:
-        b.push_uci(m)
-    return ladder.rung(name).move(b, random.Random(seed * 1000 + b.ply()), game=seed).uci()
+def sampler(cfg, model, policy: dict, gen: torch.Generator, bsz: int = 512):
+    # Mover for the arena: one batched forward over every game where this policy is to move, then a sample.
+    # policy may carry a per-spec self_elo through spec["self_elo"].
+    dev = cfg.device
+
+    def mover(games):
+        out = []
+        for i in range(0, len(games), bsz):
+            ch = games[i:i + bsz]
+            x = torch.stack([g["hist"].tokens() for g in ch])
+            m = torch.stack([maia.legal(g["board"]) for g in ch])
+            se = [g["spec"].get("self_elo", policy["self_elo"]) for g in ch]
+            oe = [g["spec"].get("oppo_elo", policy["oppo_elo"]) for g in ch]
+            logits, _ = maia.run(model, x, m, se, oe, dev)
+            for g, j in zip(ch, sample(logits, policy["temp"], policy["top_p"], gen).tolist()):
+                out.append(maia.to_move(g["board"], j))
+        return out
+    return mover
 
 
 def sample(logits: torch.Tensor, temp: float, top_p: float, gen: torch.Generator) -> torch.Tensor:
@@ -35,62 +46,32 @@ def sample(logits: torch.Tensor, temp: float, top_p: float, gen: torch.Generator
 
 
 def play(cfg, model, policy: dict, opponents: list[str], openings: list[list[str]], seed: int = 0,
-         procs: int = 10, bsz: int = 256, name: str = "gauntlet", elo: dict[str, float] | None = None,
-         log=lambda s: print(s, flush=True)) -> list[dict]:
-    # policy: self_elo, oppo_elo, history, temp, top_p. One game per (opponent, opening, colour).
+         name: str = "gauntlet", elo: dict[str, float] | None = None, label: str | None = None,
+         extra: dict | None = None, cycle: bool = False) -> list[dict]:
+    # Every opening is played with both colours. Each opening meets every opponent, or with cycle one opponent
+    # in turn, which keeps a 200-opening suite at 400 games.
     rng = random.Random(seed)
-    gen = torch.Generator().manual_seed(seed)
-    todo = [(o, op, white, rng.getrandbits(31)) for o in opponents for op in openings for white in (True, False)]
-    live, done, total = [], [], len(todo)
-    me = f"maia@{policy['self_elo']}"
-    est = None
-    with Pool(procs) as pool:
-        while todo or live:
-            while todo and len(live) < bsz:
-                o, op, white, s = todo.pop()
-                b = chess.Board()
-                for m in op:
-                    b.push_uci(m)
-                live.append({"opp": o, "white": white, "seed": s, "board": b, "opening": op})
-            mine = [g for g in live if g["board"].turn == g["white"]]
-            theirs = [g for g in live if g["board"].turn != g["white"]]
-            fut = pool.map_async(_sf, [(g["opp"], [m.uci() for m in g["board"].move_stack], g["seed"]) for g in theirs])
-            if mine:
-                logits, _ = maia.forward(cfg, model, [g["board"] for g in mine], [policy["self_elo"]] * len(mine),
-                                         [policy["oppo_elo"]] * len(mine), history=policy["history"])
-                for g, j in zip(mine, sample(logits, policy["temp"], policy["top_p"], gen).tolist()):
-                    g["board"].push(maia.to_move(g["board"], j))
-            for g, m in zip(theirs, fut.get()):
-                g["board"].push_uci(m)
-            keep = []
-            for g in live:
-                b = g["board"]
-                names = (me, g["opp"]) if g["white"] else (g["opp"], me)
-                if b.is_game_over(claim_draw=True) or b.ply() >= ladder.MAX_PLIES:
-                    s, end = ladder.ending(b)
-                    r = s if g["white"] else 1 - s
-                    done.append({"opp": g["opp"], "white": g["white"], "score": r, "plies": b.ply(), "end": end,
-                                 "moves": [m.uci() for m in b.move_stack]})
-                    progress.board(name, g["seed"], b, *names, result=f"{b.result(claim_draw=True)} · {end}")
-                    progress.event(name, f"{me} {'beat' if r == 1 else 'lost to' if r == 0 else 'drew'} {g['opp']}"
-                                         f" · {b.ply()} plies · {end}")
-                    if elo and len(done) % 20 == 0:
-                        est = rate(done, elo)
-                    stats = {"score": f"{sum(x['score'] for x in done) / len(done):.0%}",
-                             "draws": f"{sum(x['score'] == 0.5 for x in done) / len(done):.0%}",
-                             "longest": f"{max(x['plies'] for x in done)} plies"}
-                    if est is not None:
-                        stats = {"elo so far": f"{est:.0f}", **stats}
-                    progress.tick(name, len(done), total, "games", stats=stats,
-                                  note=f"{me} vs {', '.join(opponents)} · {len(live)} boards at once")
-                    if len(done) % 100 == 0:
-                        log(f"{len(done)} games")
-                else:
-                    keep.append(g)
-            if keep:
-                g = keep[0]
-                progress.board(name, g["seed"], g["board"], *((me, g["opp"]) if g["white"] else (g["opp"], me)))
-            live = keep
+    gen = torch.Generator(device=cfg.device).manual_seed(seed)
+    pairs = ([(opponents[i % len(opponents)], op) for i, op in enumerate(openings)] if cycle
+             else [(o, op) for o in opponents for op in openings])
+    todo = [{"opp": o, "opening": op, "white": w, "seed": rng.getrandbits(31), **(extra or {})}
+            for o, op in pairs for w in (True, False)]
+    total, done, est = len(todo), [], None
+    me = label or f"maia@{policy['self_elo']}"
+    a = arena.Arena(cfg, sampler(cfg, model, policy, gen), lambda: todo.pop() if todo else None, name,
+                    me=lambda s: me)
+    while not a.done():
+        done += a.step()
+        if done:
+            if elo and len(done) % 20 < 4:
+                est = rate(done, elo)
+            stats = {"score": f"{sum(x['score'] for x in done) / len(done):.0%}",
+                     "draws": f"{sum(x['score'] == 0.5 for x in done) / len(done):.0%}",
+                     "longest": f"{max(x['plies'] for x in done)} plies"}
+            if est is not None:
+                stats = {"ladder elo so far": f"{est:.0f}", **stats}
+            progress.tick(name, len(done), total, "games", stats=stats,
+                          note=f"{me} vs {', '.join(opponents)} · {len(a.live)} boards at once")
     return done
 
 

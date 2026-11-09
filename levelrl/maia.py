@@ -57,3 +57,36 @@ def forward(cfg, model, boards: list[chess.Board], self_elo: list[int], oppo_elo
     oe = torch.tensor(oppo_elo, dtype=torch.long, device=dev)
     logits, value, _ = model(x, se, oe)
     return logits.float().masked_fill(~mask, float("-inf")), value.float()
+
+
+class Hist:
+    # Incremental history tokens for one game. Profiling on the 4090 box put full replay encoding at 0.65 ms a
+    # position against 0.25 ms for the forward, so each position is tokenized once, as it is reached.
+    def __init__(self, cfg, board: chess.Board):
+        self.cfg, self.h = cfg, deque(maxlen=cfg.history)
+        replay, moves = board.copy(), []
+        while replay.move_stack and len(moves) < cfg.history - 1:
+            moves.append(replay.pop())
+        self.h.append(tokenize_board(replay))
+        for mv in reversed(moves):
+            replay.push(mv)
+            self.h.append(tokenize_board(replay))
+
+    def push(self, board: chess.Board) -> None:
+        self.h.append(tokenize_board(board))
+
+    def tokens(self) -> torch.Tensor:
+        return get_historical_tokens(self.h, self.cfg, base=0.0, inc=0.0, clk_left_before=0.0, clk_ponder=0.0)
+
+
+def legal(board: chess.Board) -> torch.Tensor:
+    return get_legal_moves_mask(board, MOVE_IDX)
+
+
+def run(model, x: torch.Tensor, mask: torch.Tensor, se, oe, dev) -> tuple[torch.Tensor, torch.Tensor]:
+    # Forward on prebuilt tokens and masks, bf16 on cuda. Returns masked fp32 move logits and value logits.
+    se = torch.as_tensor(se, dtype=torch.long, device=dev)
+    oe = torch.as_tensor(oe, dtype=torch.long, device=dev)
+    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=str(dev).startswith("cuda")):
+        logits, value, _ = model(x.to(dev, non_blocking=True), se, oe)
+    return logits.float().masked_fill(~mask.to(dev, non_blocking=True), float("-inf")), value.float()

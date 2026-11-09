@@ -26,13 +26,17 @@ def get(url: str, accept: str = "application/json") -> bytes:
     raise RuntimeError(f"rate limited: {url}")
 
 
+MAIA1 = ("maia1", "maia5", "maia9")
+
+
 def snapshot() -> Path:
-    # Never mix snapshots: these bots are still playing, so each file is one moment, named by its time.
+    # Never mix snapshots: these bots are still playing, so each file is one moment, named by its time. Keys are
+    # account names, and the Maia-1 bots for the cross-check come from the same moment.
     at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = {"at": at, "bots": {}}
-    for d in DIALS:
-        u = json.loads(get(f"https://lichess.org/api/user/maia3-79m_{d}"))
-        out["bots"][d] = {k: {f: v.get(f) for f in ("rating", "rd", "prog", "games", "prov")}
+    for acct in [f"maia3-79m_{d}" for d in DIALS] + list(MAIA1):
+        u = json.loads(get(f"https://lichess.org/api/user/{acct}"))
+        out["bots"][acct] = {k: {f: v.get(f) for f in ("rating", "rd", "prog", "games", "prov")}
                           for k, v in u.get("perfs", {}).items() if k in ("bullet", "blitz", "rapid", "classical")}
         time.sleep(1)
     ROOT.mkdir(parents=True, exist_ok=True)

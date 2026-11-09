@@ -14,7 +14,7 @@ import chess.pgn
 import torch
 
 from levelrl import anchors, data, evals, gauntlet, ladder, maia, openings, progress, units
-from levelrl.train import Trainer
+from levelrl.train import Trainer, pull
 
 # The whole run, unattended. Each stage writes runs/pipeline/<stage>.json when it finishes, so a rerun picks up
 # where the last one stopped, and a sweep arm resumes from its last checkpoint. Nothing here publishes anything:
@@ -217,10 +217,9 @@ def make_eval(ctx, T):
                                    "human_sce": [prev["probe"][band]["sce"], pr[band]["sce"]]}
         prev.clear()
         prev.update(ev)
-        old = tr.st["sign"]
-        tr.st["sign"] = 1 if lich < T else -1
-        say(f"{tr.name} @{tag}: Elo {lich:.0f} [{ci[0]:.0f}, {ci[1]:.0f}] vs T {T}, top-1 {pr[band]['top1']:.1f}%"
-            + (f", outcome now points {'up' if tr.st['sign'] > 0 else 'down'}" if old != tr.st["sign"] else ""))
+        tr.st["sign"] = pull(T, lich)
+        say(f"{tr.name} @{tag}: Elo {lich:.0f} [{ci[0]:.0f}, {ci[1]:.0f}] vs T {T}, top-1 {pr[band]['top1']:.1f}%, "
+            f"outcome pull now {tr.st['sign']:+.2f}")
         return ev
     return on_eval
 
@@ -292,7 +291,7 @@ def st_sweep(ctx):
     results = {}
     for T in targets:
         bc = next((r for r in base["curve"] if r["dial"] == T), None)
-        sign = 1 if bc is None or bc["lichess"] < T else -1
+        sign = 1.0 if bc is None else pull(T, bc["lichess"])
         for wo, wf in ARMS:
             name = arm_name(T, wo, wf)
             if done(f"arm_{name}"):

@@ -13,9 +13,10 @@ from levelrl import arena, evals, gauntlet, maia, progress
 
 # GRPO on Maia-3-79M. Groups of G games start from one booked opening against one rung, half with each colour.
 # Per game r = w_out * s * outcome + w_fid * fidelity, where fidelity is the frozen base model's mean log-prob, at
-# the target band, of the moves the policy played (the judge), and s points the outcome toward the band: +1 while
-# the last measured Lichess Elo is below T, -1 above it. The spec's plain +outcome only ever pushes up, and the
-# dial already plays above its setting at the low end, so for T=1100 it would push away from the band.
+# the target band, of the moves the policy played (the judge), and s in [-1, 1] pulls the outcome toward the band:
+# positive while the last measured Lichess Elo is below T, negative above it, fading to zero within PULL points
+# so that near the band only fidelity is left. The spec's plain +outcome only ever pushes up, and the dial
+# already plays above its setting at the low end, so for T=1100 it would push away from the band.
 # Outcome credit decays by GAMMA a ply back from the end and has the WDL head's prediction subtracted with a
 # coefficient fitted on the previous batch, kept in [0, 1].
 # Profiling: the 4090 runs the model at ~4k positions/s and the step is bound by Stockfish and Python, so
@@ -34,11 +35,24 @@ CKPT_EVERY = 25
 EVAL_AT = (25, 50, 75)
 EVAL_OPENINGS = 34
 RESIGN_P, RESIGN_N = 0.97, 6
+PULL = 150.0  # Elo from the band at which the outcome term is at full strength
 ENTROPY_FLOOR = 0.3  # collapse if entropy falls below this fraction of its first value
 
 
+def _z(v: list[float]) -> list[float]:
+    if not v:
+        return []
+    m = sum(v) / len(v)
+    sd = math.sqrt(sum((x - m) ** 2 for x in v) / len(v))
+    return [0.0] * len(v) if sd < 1e-6 else [(x - m) / sd for x in v]
+
+
+def pull(T: float, elo: float) -> float:
+    return max(-1.0, min(1.0, (T - elo) / PULL))
+
+
 class Trainer:
-    def __init__(self, cfg, base, out: Path, T: int, w_out: float, w_fid: float, sign: int, units, games: int,
+    def __init__(self, cfg, base, out: Path, T: int, w_out: float, w_fid: float, sign: float, units, games: int,
                  seed: int = 0, name: str = "train"):
         self.cfg, self.base, self.out, self.T, self.w_out, self.w_fid = cfg, base, out, T, w_out, w_fid
         self.units, self.games, self.seed, self.name = units, games, seed, name
@@ -130,22 +144,20 @@ class Trainer:
 
     # --- update ---
     def advantages(self, group: list[dict]):
+        # Outcome and judge are each standardised over the group's moves before the weights apply. In raw units
+        # the outcome (-1, 0, 1) swamps a mean log-prob that moves a few hundredths between games, and every
+        # mixed arm would train like the outcome-only arm.
         s, c = self.st["sign"], self.st["c"]
+        d = 1.0 if s >= 0 else -1.0
         per, rs = [], []
         for g in group:
             o = 2 * g["score"] - 1
             fid = sum(r[5] for r in g["rec"]) / max(1, len(g["rec"]))
             rs.append(self.w_out * s * o + self.w_fid * fid)
             for r in g["rec"]:
-                k = g["plies"] - r[6]
-                per.append((r, s * (o * GAMMA ** k - c * r[4]), fid))
-        if not per:
-            return [], rs
-        mo = sum(p[1] for p in per) / len(per)
-        mf = sum(p[2] for p in per) / len(per)
-        a = [self.w_out * (u - mo) + self.w_fid * (f - mf) for _, u, f in per]
-        sd = math.sqrt(sum(x * x for x in a) / len(a)) + 1e-6
-        return [(p[0], x / sd) for p, x in zip(per, a)], rs
+                per.append((r, d * (o * GAMMA ** (g["plies"] - r[6]) - c * r[4]), fid))
+        zo, zf = _z([p[1] for p in per]), _z([p[2] for p in per])
+        return [(p[0], self.w_out * abs(s) * x + self.w_fid * y) for p, x, y in zip(per, zo, zf)], rs
 
     def fit_c(self, batch: list[dict]):
         ys, vs = [], []
@@ -271,7 +283,7 @@ class Trainer:
             self.st["log"].append(s)
             progress.tick(self.name, min(self.st["games"], self.games), self.games, "games",
                           note=f"update {u} · reward {s['reward']:+.3f} · KL {s['kl_base']:.4f} · entropy {s['entropy']:.2f}",
-                          stats={"T": self.T, "w_out/w_fid": f"{self.w_out}/{self.w_fid}", "toward band": f"{self.st['sign']:+d}",
+                          stats={"T": self.T, "w_out/w_fid": f"{self.w_out}/{self.w_fid}", "toward band": f"{self.st['sign']:+.2f}",
                                  "judge": f"{s['judge']:.2f}", "cv c": f"{self.st['c']:.2f}"})
             if u % CKPT_EVERY == 0:
                 self.save()

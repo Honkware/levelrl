@@ -26,9 +26,10 @@ against real games.
   each dial's ladder rating is fitted against that bot's Lichess rating. Lichess is only ever read, with no
   account and no games played.
 - `levelrl/train.py` is the trainer. Groups of 8 games share an opening and an opponent. The reward is
-  `w_out * sign * outcome + w_fid * judge`, where the judge is the frozen base model's mean log-prob of the moves
-  played at the target band, and `sign` points the outcome toward the band (winning is rewarded below the target,
-  losing above it).
+  `w_out * pull * outcome + w_fid * judge`, where the judge is the frozen base model's mean log-prob of the moves
+  played at the target band. `pull` runs from +1 (150 or more Elo below the target, winning is rewarded) to -1
+  (150 or more above, losing is rewarded) and is zero on the target. Outcome and judge are each standardised
+  within a group before the weights apply, so 0.5/0.5 means an even split.
 - `levelrl/evals.py` holds what never feeds a reward: move-match on held-out human positions, blunder types and
   per-phase error rates judged by Stockfish, opening-book overlap and repetition rate.
 - `levelrl/pipeline.py` runs all of it: snapshot, anchors, Maia-1 cross-check, base curve, smoke run, a sweep of
@@ -55,9 +56,6 @@ cross-check is skipped unless lc0 and the Maia-1 nets are present (`scripts/setu
 - The bots above dial 2200 have few rated games and are treated as plus or minus 150.
 - The judge is the base model, so the policy can learn to please it. The held-out human move-match and the hack
   catalog are the check on that.
-- The reward weights are in raw units. Outcome is -1, 0 or 1 while the judge's score is a mean log-prob that
-  should move much less from game to game, so a 0.5/0.5 arm is probably still mostly an outcome arm. Not measured
-  yet.
 
 ## Credits and licence
 

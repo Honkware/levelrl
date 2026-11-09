@@ -39,7 +39,7 @@ def ci(x: list[int], n: int = 2000, seed: int = 0) -> tuple[float, float]:
     return 100 * means[int(0.025 * n)], 100 * means[int(0.975 * n)]
 
 
-def run(device: str = "mps") -> dict:
+def run(device: str = "cpu") -> dict:
     cfg, model = maia.load(device)
     res = {"rule": f"bootstrap 95% CI of ours, widened by {SLACK} pt, must cover the Figure 5 value", "bands": {}}
     for b in data.BANDS:

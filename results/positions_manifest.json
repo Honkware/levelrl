@@ -1,0 +1,31 @@
+{
+ "cutoff": "2025-07",
+ "months": [
+  "2025-09",
+  "2026-03",
+  "2026-09"
+ ],
+ "seed": 0,
+ "bands": [
+  1100,
+  1300,
+  1500,
+  1700,
+  1900
+ ],
+ "half": 50,
+ "min_games": 50,
+ "skip_plies": 10,
+ "min_clock": 30.0,
+ "keep": 0.01,
+ "speed": "blitz",
+ "calib": 20001,
+ "fid": {
+  "1100": 45553,
+  "1300": 50001,
+  "1500": 50001,
+  "1700": 50001,
+  "1900": 50001
+ },
+ "note": "fid_1100 is 45,553 rows, short of 50,000: the three months hold about 46,300 eligible 1100-band blitz positions at keep=0.01."
+}

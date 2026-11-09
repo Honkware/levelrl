@@ -81,7 +81,7 @@ def nucleus_need(p, idx):
     return torch.where(above == 0, torch.zeros_like(above), above + pm[:, 0])
 
 
-def infer(device: str = "mps", bsz: int = 512) -> dict:
+def infer(device: str = "cpu", bsz: int = 512) -> dict:
     # Which settings make the bots' own moves most likely: history on or off, the opponent Elo set to the dial or
     # to the human's real rating, and the sampling temperature. top-p is judged by how often a played move falls
     # outside the nucleus, since a move outside it has zero probability under that setting.

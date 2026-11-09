@@ -1,0 +1,7 @@
+maia3 @ git+https://github.com/CSSLab/maia3.git@1e13597c42d4858b7cfd7cfdae01e297263364b2
+torch==2.15.0
+chess==1.11.2
+huggingface_hub==2.4.0
+numpy==2.5.4
+zstandard==0.25.0
+pytest==9.2.0

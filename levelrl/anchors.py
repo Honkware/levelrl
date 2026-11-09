@@ -125,11 +125,12 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["snapshot", "games", "infer"])
     ap.add_argument("--n", type=int, default=200)
+    ap.add_argument("--device", default="cpu")
     a = ap.parse_args()
     if a.cmd == "snapshot":
         print(snapshot())
     elif a.cmd == "infer":
-        infer()
+        infer(a.device)
     else:
         for d in DIALS:
             p = games(d, a.n)

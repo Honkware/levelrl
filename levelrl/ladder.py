@@ -63,22 +63,35 @@ def rung(name: str) -> Rung:
     return _engines[name]
 
 
-def play(white, black, opening: list[str], seed: int) -> tuple[float, list[str]]:
-    # White's score: 1, 0.5 or 0. Players are anything with move(board, rng).
+def ending(b: chess.Board) -> tuple[float, str]:
+    # White's score (1, 0.5 or 0) and how the game ended.
+    o = b.outcome(claim_draw=True)
+    if o is None:
+        return 0.5, "move cap"
+    return {True: 1.0, False: 0.0, None: 0.5}[o.winner], o.termination.name.lower().replace("_", " ")
+
+
+def play(white, black, opening: list[str], seed: int, show: str | None = None) -> tuple[float, list[str], str]:
+    # Players are anything with move(board, rng). show names the job to stream this game's board for.
     rng = random.Random(seed)
     b = chess.Board()
     for mv in opening:
         b.push_uci(mv)
     while not b.is_game_over(claim_draw=True) and b.ply() < MAX_PLIES:
         b.push((white if b.turn else black).move(b, rng))
-    r = b.result(claim_draw=True)
-    return {"1-0": 1.0, "0-1": 0.0}.get(r, 0.5), [m.uci() for m in b.move_stack]
+        if show:
+            progress.board(show, seed, b, getattr(white, "name", "white"), getattr(black, "name", "black"))
+    s, end = ending(b)
+    if show:
+        progress.board(show, seed, b, getattr(white, "name", "white"), getattr(black, "name", "black"),
+                       result=f"{b.result(claim_draw=True)} · {end}")
+    return s, [m.uci() for m in b.move_stack], end
 
 
 def _job(args):
     w, bl, op, seed = args
-    s, moves = play(rung(w), rung(bl), op, seed)
-    return {"white": w, "black": bl, "score": s, "plies": len(moves)}
+    s, moves, end = play(rung(w), rung(bl), op, seed, show="ladder")
+    return {"white": w, "black": bl, "score": s, "plies": len(moves), "end": end}
 
 
 def fit(games: list[dict], names: list[str], pin=PIN, iters: int = 2000) -> dict[str, float]:
@@ -137,10 +150,21 @@ def run(per_pair: int = 200, span: int = SPAN, procs: int = 10, seed: int = 1) -
     path = OUT.parent / "ladder_games.json"
     games = json.loads(path.read_text()) if path.exists() else []
     games = [g for g in games if g["white"] in RUNGS and g["black"] in RUNGS]
+    order = {n: i for i, n in enumerate(names)}
+    new = []
     with Pool(procs) as p:
         for k, g in enumerate(p.imap_unordered(_job, jobs, chunksize=4)):
             games.append(g)
-            progress.tick("ladder", k + 1, len(jobs), "games")
+            new.append(g)
+            w, b = g["white"], g["black"]
+            progress.event("ladder", f"{w} {'beat' if g['score'] == 1 else 'lost to' if g['score'] == 0 else 'drew'}"
+                                     f" {b} · {g['plies']} plies · {g['end']}")
+            progress.tick("ladder", k + 1, len(jobs), "games", note=f"{procs} boards at once · {len(jobs) - k - 1:,} queued",
+                          stats={"white scores": f"{sum(x['score'] for x in new) / len(new):.0%}",
+                                 "draws": f"{sum(x['score'] == 0.5 for x in new) / len(new):.0%}",
+                                 "upsets": sum((x["score"] == 1) == (order[x["white"]] < order[x["black"]])
+                                               for x in new if x["score"] != 0.5),
+                                 "longest": f"{max(x['plies'] for x in new)} plies"})
             if k % 200 == 0:
                 print(k, "/", len(jobs), flush=True)
     OUT.parent.mkdir(exist_ok=True)

@@ -35,13 +35,15 @@ def sample(logits: torch.Tensor, temp: float, top_p: float, gen: torch.Generator
 
 
 def play(cfg, model, policy: dict, opponents: list[str], openings: list[list[str]], seed: int = 0,
-         procs: int = 10, bsz: int = 256, name: str = "gauntlet",
+         procs: int = 10, bsz: int = 256, name: str = "gauntlet", elo: dict[str, float] | None = None,
          log=lambda s: print(s, flush=True)) -> list[dict]:
     # policy: self_elo, oppo_elo, history, temp, top_p. One game per (opponent, opening, colour).
     rng = random.Random(seed)
     gen = torch.Generator().manual_seed(seed)
     todo = [(o, op, white, rng.getrandbits(31)) for o in opponents for op in openings for white in (True, False)]
     live, done, total = [], [], len(todo)
+    me = f"maia@{policy['self_elo']}"
+    est = None
     with Pool(procs) as pool:
         while todo or live:
             while todo and len(live) < bsz:
@@ -63,15 +65,31 @@ def play(cfg, model, policy: dict, opponents: list[str], openings: list[list[str
             keep = []
             for g in live:
                 b = g["board"]
+                names = (me, g["opp"]) if g["white"] else (g["opp"], me)
                 if b.is_game_over(claim_draw=True) or b.ply() >= ladder.MAX_PLIES:
-                    s = {"1-0": 1.0, "0-1": 0.0}.get(b.result(claim_draw=True), 0.5)
-                    done.append({"opp": g["opp"], "white": g["white"], "score": s if g["white"] else 1 - s,
-                                 "plies": b.ply(), "moves": [m.uci() for m in b.move_stack]})
-                    progress.tick(name, len(done), total, "games")
+                    s, end = ladder.ending(b)
+                    r = s if g["white"] else 1 - s
+                    done.append({"opp": g["opp"], "white": g["white"], "score": r, "plies": b.ply(), "end": end,
+                                 "moves": [m.uci() for m in b.move_stack]})
+                    progress.board(name, g["seed"], b, *names, result=f"{b.result(claim_draw=True)} · {end}")
+                    progress.event(name, f"{me} {'beat' if r == 1 else 'lost to' if r == 0 else 'drew'} {g['opp']}"
+                                         f" · {b.ply()} plies · {end}")
+                    if elo and len(done) % 20 == 0:
+                        est = rate(done, elo)
+                    stats = {"score": f"{sum(x['score'] for x in done) / len(done):.0%}",
+                             "draws": f"{sum(x['score'] == 0.5 for x in done) / len(done):.0%}",
+                             "longest": f"{max(x['plies'] for x in done)} plies"}
+                    if est is not None:
+                        stats = {"elo so far": f"{est:.0f}", **stats}
+                    progress.tick(name, len(done), total, "games", stats=stats,
+                                  note=f"{me} vs {', '.join(opponents)} · {len(live)} boards at once")
                     if len(done) % 100 == 0:
                         log(f"{len(done)} games")
                 else:
                     keep.append(g)
+            if keep:
+                g = keep[0]
+                progress.board(name, g["seed"], g["board"], *((me, g["opp"]) if g["white"] else (g["opp"], me)))
             live = keep
     return done
 

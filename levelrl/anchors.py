@@ -135,8 +135,9 @@ def fit_sampling(device: str = "cpu", bsz: int = 512, eps: float = 1e-4) -> dict
     tops = (0.9, 0.92, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99, 1.0)
     res, pooled = {}, {}
     for k, d in enumerate(DIALS):
-        progress.tick("sampling", k, len(DIALS), "dials", force=True)
         pos = bot_positions(d)
+        progress.tick("sampling", k, len(DIALS), "dials", force=True,
+                      note=f"maia3-79m_{d} · {len(pos):,} bot moves · {len(temps) * len(tops)} settings")
         ll = {(t, q): 0.0 for t in temps for q in tops}
         miss = {(t, q): 0 for t in temps for q in tops}
         for i in range(0, len(pos), bsz):
@@ -166,6 +167,7 @@ def fit_sampling(device: str = "cpu", bsz: int = 512, eps: float = 1e-4) -> dict
         for key, v in ll.items():
             pooled[key] = pooled.get(key, 0.0) + v
         print(d, json.dumps(res[d]["best"]), flush=True)
+        progress.event("sampling", f"maia3-79m_{d} → temp {best[0]}, top-p {best[1]}, misses {miss[best] / n:.2%}")
     best = max(pooled, key=pooled.get)
     out = {"history": True, "oppo": "dial", "eps": eps, "pooled": {"temp": best[0], "top_p": best[1]}, "dials": res}
     (ROOT / "bot_sampling.json").write_text(json.dumps(out, indent=1))

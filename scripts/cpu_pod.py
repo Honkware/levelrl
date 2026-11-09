@@ -25,6 +25,9 @@ wait
 python -m levelrl.data --months $MONTHS > build.log 2>&1
 tar czf out.tgz data/positions data/scan/*/done *.log
 touch FINISHED
+# Left idle overnight once, the pod cost $3.95 against about $0.55 of work. It now deletes itself after GRACE.
+sleep "$GRACE"
+curl -s -X DELETE -H "Authorization: Bearer $RUNPOD_API_KEY" "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID"
 sleep infinity
 """
 
@@ -51,6 +54,7 @@ if __name__ == "__main__":
     ap.add_argument("--pod")
     ap.add_argument("--months", default="2025-09 2026-03 2026-09")
     ap.add_argument("--vcpu", type=int, default=8)
+    ap.add_argument("--grace", type=int, default=3600, help="seconds to stay up after FINISHED")
     a = ap.parse_args()
     if a.cmd == "create":
         src = Path(__file__).resolve().parent.parent / "levelrl" / "data.py"
@@ -58,7 +62,8 @@ if __name__ == "__main__":
             "name": "levelrl-data", "computeType": "CPU", "cpuFlavorIds": ["cpu3g"], "vcpuCount": a.vcpu,
             "imageName": "python:3.12-slim", "containerDiskInGb": 40, "ports": ["8000/http"],
             "dockerEntrypoint": ["bash", "-c"], "dockerStartCmd": [SCRIPT],
-            "env": {"DATA_PY": base64.b64encode(src.read_bytes()).decode(), "MONTHS": a.months},
+            "env": {"DATA_PY": base64.b64encode(src.read_bytes()).decode(), "MONTHS": a.months,
+                    "GRACE": str(a.grace), "RUNPOD_API_KEY": os.environ["RUNPOD_API_KEY"]},
         })
         print(json.dumps({k: pod.get(k) for k in ("id", "costPerHr", "machineId")}))
     elif a.cmd == "watch":

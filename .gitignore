@@ -3,3 +3,6 @@ __pycache__/
 runs/
 data/raw/
 *.pt
+data/positions/
+data/scan/
+data/anchors/games/

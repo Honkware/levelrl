@@ -87,7 +87,12 @@ def scan(month: str, keep: float = KEEP, seed: int = 0) -> Path:
         return out
     rng, counts, rows, buf, h = random.Random(f"{seed}-{month}"), Counter(), [], [], {}
 
+    seen = [0]
+
     def flush():
+        seen[0] += 1
+        if seen[0] % 2_000_000 == 0:
+            print(f"{month}: {seen[0] // 1_000_000}M games, {len(rows)} rows", flush=True)
         if not h or not human(h):
             return
         counts[h["White"]] += 1

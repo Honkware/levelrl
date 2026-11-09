@@ -4,6 +4,7 @@ import gzip
 import io
 import json
 import random
+import subprocess
 
 import chess.pgn
 import pytest
@@ -57,6 +58,34 @@ def test_picked_positions_skip_book_plies_and_low_clocks():
         assert data.SKIP_PLIES <= len(row["moves"]) < 14
         assert data.board(row).is_legal(chess.Move.from_uci(row["move"]))
     assert data.pick(game(late="0:00:20"), random.Random(0)) is None
+
+
+def dump(tmp_path, monkeypatch, games: list[str]) -> None:
+    monkeypatch.setattr(data, "ROOT", tmp_path)
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "dump.pgn").write_text("\n".join(games))
+    subprocess.run(["zstd", "-q", "-o", str(raw / "lichess_db_standard_rated_2026-09.pgn.zst"), str(raw / "dump.pgn")],
+                   check=True)
+
+
+def test_scan_counts_only_human_rated_games(tmp_path, monkeypatch):
+    rated = [GAME.format(late="0:02:35").replace("/abc", f"/g{i}") for i in range(60)]
+    bot = GAME.format(late="0:02:35").replace('[Black "b"]', '[Black "b"]\n[BlackTitle "BOT"]')
+    casual = GAME.format(late="0:02:35").replace("Rated", "Casual")
+    dump(tmp_path, monkeypatch, rated + [bot, casual])
+    d = data.scan("2026-09", keep=1.0)
+    counts = json.loads(gzip.decompress((d / "counts.json.gz").read_bytes()))
+    assert counts == {"a": 60, "b": 60}
+    assert len([1 for _ in gzip.open(d / "rows.jsonl.gz", "rt")]) == 60
+
+
+def test_a_dropped_stream_does_not_mark_the_month_done(tmp_path, monkeypatch):
+    monkeypatch.setattr(data, "ROOT", tmp_path)
+    monkeypatch.setattr(data, "source", lambda m: "printf '[Event \"x\"]\\n'; exit 3")
+    with pytest.raises(AssertionError, match="stream failed"):
+        data.scan("2026-09")
+    assert not (tmp_path / "scan" / "2026-09" / "done").exists()
 
 
 def test_the_mover_and_opponent_ratings_follow_the_side_to_move():

@@ -24,6 +24,7 @@ SKIP_PLIES = 10
 MIN_CLOCK = 30.0
 N_CALIB = 20_000
 N_FID = 50_000
+KEEP = 0.01
 
 ROOT = Path(__file__).resolve().parent.parent / "data"
 URL = "https://database.lichess.org/standard/lichess_db_standard_rated_{}.pgn.zst"
@@ -36,61 +37,16 @@ def check_month(month: str) -> None:
         raise SystemExit(f"leakage guard: {month} is inside Maia-3's training window (ends {CUTOFF})")
 
 
-def raw(month: str) -> Path:
+def source(month: str) -> str:
+    # A local copy if there is one, else the dump streamed from Lichess. Home links here manage 2-3 MB/s,
+    # so a month is about three hours either way, and streaming needs no disk.
     check_month(month)
-    p = ROOT / "raw" / f"lichess_{month}.pgn.zst"
-    if not p.exists() or p.with_suffix(".part").exists():
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.with_suffix(".part").touch()
-        subprocess.run(["curl", "-sfL", "-C", "-", "-o", str(p), URL.format(month)], check=True)
-        p.with_suffix(".part").unlink()
-    return p
+    p = ROOT / "raw" / f"lichess_db_standard_rated_{month}.pgn.zst"
+    return f"zstd -dc '{p}'" if p.exists() else f"curl -sfL '{URL.format(month)}' | zstd -dc"
 
 
 def human(h: dict) -> bool:
     return "Rated" in h.get("Event", "") and "BOT" not in (h.get("WhiteTitle", ""), h.get("BlackTitle", ""))
-
-
-def headers(month: str):
-    # Headers only, via grep: a Python pass over ~200 GB of decompressed text per month takes hours.
-    keys = "Event|White|Black|WhiteTitle|BlackTitle"
-    cmd = f"zstd -dc '{raw(month)}' | grep -E '^\\[({keys}) '"
-    with subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, text=True, bufsize=1 << 20) as proc:
-        h = {}
-        for line in proc.stdout:
-            if not (mt := HDR.match(line.strip())):
-                continue  # a quote inside a player name breaks the pattern; a few lines per month
-            k, v = mt.groups()
-            if k == "Event" and h:
-                yield h
-                h = {}
-            h[k] = v
-        if h:
-            yield h
-
-
-def count_players(months: tuple[str, ...]) -> Counter:
-    p = ROOT / f"counts_{'_'.join(months)}.json.gz"
-    if p.exists():
-        return Counter(json.loads(gzip.decompress(p.read_bytes())))
-    n = Counter()
-    for m in months:
-        for h in headers(m):
-            if human(h):
-                n[h["White"]] += 1
-                n[h["Black"]] += 1
-    p.write_bytes(gzip.compress(json.dumps(n).encode()))
-    return n
-
-
-def games(month: str):
-    proc = subprocess.Popen(["zstd", "-dc", str(raw(month))], stdout=subprocess.PIPE)
-    text = io.TextIOWrapper(proc.stdout, encoding="utf-8", errors="replace")
-    try:
-        while (g := chess.pgn.read_game(text)) is not None:
-            yield g
-    finally:
-        proc.kill()
 
 
 def clock(node) -> float | None:
@@ -118,8 +74,44 @@ def pick(g: chess.pgn.Game, rng: random.Random) -> dict | None:
     return {
         "site": h["Site"], "moves": [n.move.uci() for n in nodes[:i]], "move": nodes[i].move.uci(),
         "elo": int(h["WhiteElo" if white else "BlackElo"]), "oppo_elo": int(h["BlackElo" if white else "WhiteElo"]),
-        "tc": h.get("TimeControl", "-"),
+        "white": h["White"], "black": h["Black"], "tc": h.get("TimeControl", "-"),
     }
+
+
+def scan(month: str, keep: float = KEEP, seed: int = 0) -> Path:
+    # One pass per month: every human game counts toward its players' totals, and a random `keep` share is
+    # parsed into a candidate position. The 50-game rule needs the whole window counted, so it is applied in
+    # build(), after every month is in.
+    out = ROOT / "scan" / month
+    if (out / "done").exists():
+        return out
+    rng, counts, rows, buf, h = random.Random(f"{seed}-{month}"), Counter(), [], [], {}
+
+    def flush():
+        if not h or not human(h):
+            return
+        counts[h["White"]] += 1
+        counts[h["Black"]] += 1
+        if h.get("WhiteElo", "?").isdigit() and h.get("BlackElo", "?").isdigit() and rng.random() < keep:
+            if (g := chess.pgn.read_game(io.StringIO("".join(buf)))) and (row := pick(g, rng)):
+                rows.append(row | {"month": month})
+
+    proc = subprocess.Popen(["bash", "-c", f"set -o pipefail; {source(month)}"], stdout=subprocess.PIPE)
+    for line in io.TextIOWrapper(proc.stdout, encoding="utf-8", errors="replace"):
+        if line.startswith("[Event ") and buf:
+            flush()
+            buf, h = [], {}
+        buf.append(line)
+        if line[0] == "[" and (mt := HDR.match(line.rstrip())):
+            h[mt[1]] = mt[2]
+    flush()
+    # A dropped stream would undercount every player and quietly bias the 50-game rule.
+    assert proc.wait() == 0, f"{month}: stream failed ({proc.returncode})"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "counts.json.gz").write_bytes(gzip.compress(json.dumps(counts).encode()))
+    write(out / "rows.jsonl.gz", rows)
+    (out / "done").write_text(json.dumps({"games": sum(counts.values()) // 2, "rows": len(rows), "keep": keep}))
+    return out
 
 
 def band(elo: int) -> int | None:
@@ -129,32 +121,23 @@ def band(elo: int) -> int | None:
 def build(months: tuple[str, ...] = MONTHS, seed: int = 0) -> None:
     for m in months:
         check_month(m)
-    counts = count_players(months)
-    rng = random.Random(seed)
-    per = {b: -(-N_FID // len(months)) for b in BANDS}
-    calib_per = -(-N_CALIB // len(months))
-    calib, fid = [], {b: [] for b in BANDS}
+    counts, by_month = Counter(), {}
     for m in months:
-        got, cal = Counter(), 0
-        for g in games(m):
-            h = g.headers
-            if not human(h) or not h.get("WhiteElo", "?").isdigit() or not h.get("BlackElo", "?").isdigit():
-                continue
-            if min(counts[h["White"]], counts[h["Black"]]) < MIN_GAMES:
-                continue
-            row = pick(g, rng)
-            if row is None:
-                continue
-            row["month"] = m
-            b = band(row["elo"])
-            if cal < calib_per:
-                calib.append(row)
-                cal += 1
-            elif b is not None and got[b] < per[b]:
-                fid[b].append(row)
-                got[b] += 1
-            if cal >= calib_per and all(got[b] >= per[b] for b in BANDS):
-                break
+        d = scan(m, seed=seed)
+        counts.update(json.loads(gzip.decompress((d / "counts.json.gz").read_bytes())))
+        by_month[m] = [json.loads(line) for line in gzip.open(d / "rows.jsonl.gz", "rt")]
+    rng = random.Random(seed)
+    calib, fid = [], {b: [] for b in BANDS}
+    # Equal shares per month, so both years carry the same weight.
+    n_cal, n_fid = -(-N_CALIB // len(months)), -(-N_FID // len(months))
+    for m, rows in by_month.items():
+        rng.shuffle(rows)
+        cal = rows[:n_cal]
+        used = {r["site"] for r in cal}
+        calib += cal
+        for b in BANDS:
+            fid[b] += [r for r in rows[n_cal:] if band(r["elo"]) == b and r["site"] not in used
+                       and min(counts[r["white"]], counts[r["black"]]) >= MIN_GAMES][:n_fid]
     out = ROOT / "positions"
     out.mkdir(parents=True, exist_ok=True)
     write(out / "calib.jsonl.gz", calib)
@@ -162,7 +145,7 @@ def build(months: tuple[str, ...] = MONTHS, seed: int = 0) -> None:
         write(out / f"fid_{b}.jsonl.gz", rows)
     (out / "manifest.json").write_text(json.dumps({
         "cutoff": CUTOFF, "months": months, "seed": seed, "bands": BANDS, "half": HALF, "min_games": MIN_GAMES,
-        "skip_plies": SKIP_PLIES, "min_clock": MIN_CLOCK, "calib": len(calib),
+        "skip_plies": SKIP_PLIES, "min_clock": MIN_CLOCK, "keep": KEEP, "calib": len(calib),
         "fid": {b: len(r) for b, r in fid.items()},
     }, indent=1))
 
@@ -191,5 +174,9 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--months", nargs="+", default=list(MONTHS))
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--scan", help="scan one month only")
     a = ap.parse_args()
-    build(tuple(a.months), a.seed)
+    if a.scan:
+        scan(a.scan, seed=a.seed)
+    else:
+        build(tuple(a.months), a.seed)

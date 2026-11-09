@@ -56,6 +56,10 @@ def board(job: str, game, b, white: str, black: str, result: str | None = None) 
     mine = cur is not None and cur.get("pid") == os.getpid() and cur.get("game") == game
     if cur is not None and not mine and now - cur["t"] < (6 if cur.get("result") else 3):
         return
-    last = b.move_stack[-1].uci() if b.move_stack else None
-    _write(p, {"pid": os.getpid(), "game": game, "job": job, "fen": b.fen(), "last": last, "white": white,
-               "black": black, "ply": b.ply(), "result": result, "t": now})
+    last = san = None
+    if b.move_stack:
+        mv = b.pop()
+        last, san = mv.uci(), b.san(mv)
+        b.push(mv)
+    _write(p, {"pid": os.getpid(), "game": game, "job": job, "fen": b.fen(), "last": last, "san": san,
+               "white": white, "black": black, "ply": b.ply(), "result": result, "t": now})

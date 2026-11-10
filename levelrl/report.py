@@ -40,6 +40,7 @@ def write(run: Path, res: Path) -> dict:
             "distance_to_T": f["elo"] - T, "fidelity_top1": fid.get("top1"), "fidelity_sce": fid.get("sce"),
             "fidelity_top1_vs_base_ci": fid.get("top1_vs_base_ci"), "fidelity_sce_vs_base_ci": fid.get("sce_vs_base_ci"),
             "keep_point_fidelity_drop": fid.get("top1_vs_base_ci") is not None and fid["top1_vs_base_ci"][1] < -FID_DROP_PP,
+            "kl_base": next((x["kl_base"] for x in reversed(a.get("train_log", [])) if "kl_base" in x), None),
             "curve": curve, "sensitivity": a["sensitivity"], "humanlike": a["humanlike"], "recoveries": a["recoveries"]}
         # Hack catalog: per-arm drift signals, and every eval where the judge rose while human fidelity fell.
         for e in a["evals"]:
@@ -134,14 +135,15 @@ def summary(res, anchors, base, cross, paretos, catalog, sweep):
         L.append("")
     ref = sweep.get("humanlike_reference", {})
     for T, arms in paretos.items():
-        L += [f"## T = {T}", "", "| arm w_out/w_fid | checkpoint | Elo | 95% CI | vs T | fidelity top-1 | vs base (pp, 95% CI) |",
-              "|---|---|---|---|---|---|---|"]
+        L += [f"## T = {T}", "", "| arm w_out/w_fid | checkpoint | Elo | 95% CI | vs T | fidelity top-1 | vs base (pp, 95% CI) | KL to base at the end |",
+              "|---|---|---|---|---|---|---|---|"]
         for a in arms.values():
             ci = a["fidelity_top1_vs_base_ci"]
             top1 = f"{a['fidelity_top1']:.1f}" if a["fidelity_top1"] is not None else "n/a"
             L.append(f"| {a['w_out']}/{a['w_fid']} | {a['final_tag']} | {a['elo']:.0f} | {a['elo_ci'][0]:.0f} to "
                      f"{a['elo_ci'][1]:.0f} | {a['distance_to_T']:+.0f} | {top1} | "
-                     + (f"{ci[0]:+.1f} to {ci[1]:+.1f} |" if ci else "n/a |"))
+                     + (f"{ci[0]:+.1f} to {ci[1]:+.1f} |" if ci else "n/a |")
+                     + (f" {a['kl_base']:.3f} |" if a.get("kl_base") is not None else " n/a |"))
         L += ["", "Elo during training, at each eval:", "", "| arm | " + " | ".join(
             c["tag"] for c in max((a["curve"] for a in arms.values()), key=len)) + " |",
               "|---|" + "---|" * max(len(a["curve"]) for a in arms.values())]

@@ -28,3 +28,28 @@ def test_rate_recovers_a_known_rating_against_fixed_rungs():
     games = [{"opp": o, "score": float(rng.random() < 1 / (1 + 10 ** ((e - 1450) / 400)))}
              for o, e in elo.items() for _ in range(2000)]
     assert abs(gauntlet.rate(games, elo) - 1450) < 25
+    rated, ci = gauntlet.rate_ci(games[::20], elo, n=100)
+    assert abs(rated - 1450) < 60
+    assert ci[0] < rated < ci[1]
+
+
+def test_play_reports_zero_of_total_before_the_first_arena_step(monkeypatch):
+    class EmptyArena:
+        live = []
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def done(self):
+            return True
+
+    calls = []
+    monkeypatch.setattr(gauntlet.arena, "Arena", EmptyArena)
+    monkeypatch.setattr(gauntlet.progress, "tick", lambda *args, **kwargs: calls.append((args, kwargs)))
+    cfg = type("Cfg", (), {"device": "cpu"})()
+    policy = {"history": True, "temp": 1.0, "top_p": 1.0, "self_elo": 1500, "oppo_elo": 1500}
+    assert gauntlet.play(cfg, object(), policy, ["elo1500"], [[]]) == []
+    args, kwargs = calls[0]
+    assert args == ("gauntlet", 0, 2, "games")
+    assert kwargs["force"] is True
+    assert "starting" in kwargs["note"]

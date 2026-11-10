@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shutil
 import time
 import traceback
@@ -13,8 +14,8 @@ import chess.engine
 import chess.pgn
 import torch
 
-from levelrl import anchors, data, evals, gauntlet, ladder, maia, openings, progress, units
-from levelrl.train import Trainer, pull
+from levelrl import anchors, arena, data, evals, gauntlet, ladder, maia, openings, progress, units
+from levelrl.train import CTRL_GAMES, KL_COEF, PULL, Trainer, pull
 
 # The whole run, unattended. Each stage writes runs/pipeline/<stage>.json when it finishes, so a rerun picks up
 # where the last one stopped, and a sweep arm resumes from its last checkpoint. Nothing here publishes anything:
@@ -80,18 +81,30 @@ class Ctx:
         return {"ladder": r, "ladder_ci": ci, "se": (ci[1] - ci[0]) / 3.92, "games": len(games),
                 "score": sum(g["score"] for g in games) / len(games)}
 
-    def adaptive(self, model, policy, name, label, seed, n_main=100):
-        # A short pilot against rungs spread over the ladder, then the main block against the three rungs
-        # nearest the pilot's estimate, so most games are played where they say the most.
+    def adaptive(self, model, policy, dials, name, label, seed, n_main=200) -> dict[int, list]:
+        # For each dial, a short pilot against rungs spread over the ladder, then the main block against the three
+        # rungs nearest the pilot's estimate, so most games are played where they say the most. All dials share
+        # one arena per phase.
+        rng = random.Random(seed)
         rungs = sorted(self.elo, key=self.elo.get)
         spread = [rungs[round(i * (len(rungs) - 1) / 3)] for i in range(4)]
-        g1 = gauntlet.play(self.cfg, model, policy, spread, self.suite[:6], seed=seed, name=name, elo=self.elo,
-                           label=label)
-        est = gauntlet.rate(g1, self.elo)
-        near = sorted(self.elo, key=lambda n: abs(self.elo[n] - est))[:3]
-        g2 = gauntlet.play(self.cfg, model, policy, near, self.suite[6:6 + n_main], seed=seed + 1, name=name,
-                           elo=self.elo, label=label, cycle=True)
-        return g1 + g2
+        spec = lambda d, opp, op, w: {"opp": opp, "opening": op, "white": w, "seed": rng.getrandbits(31),
+                                      "self_elo": d, "oppo_elo": d, "dial": d, "label": label(d)}
+        todo = [spec(d, o, op, w) for d in dials for o in spread for op in self.suite[:6] for w in (True, False)]
+        rng.shuffle(todo)
+        by = {d: [] for d in dials}
+        for g in gauntlet.run(self.cfg, model, policy, todo, seed, name, label=f"{len(dials)} dials, pilot"):
+            by[g["dial"]].append(g)
+        todo = []
+        for d in dials:
+            est = gauntlet.rate(by[d], self.elo)
+            near = sorted(self.elo, key=lambda n: abs(self.elo[n] - est))[:3]
+            todo += [spec(d, near[i % 3], op, w) for i, op in enumerate(self.suite[6:6 + n_main]) for w in (True, False)]
+        rng.shuffle(todo)
+        for g in gauntlet.run(self.cfg, model, policy, todo, seed + 1, name, label=f"{len(dials)} dials",
+                              versus="the rungs nearest each"):
+            by[g["dial"]].append(g)
+        return by
 
     def base_scores(self, T):
         if T not in self._base_scores:
@@ -110,9 +123,10 @@ def st_snapshot(ctx):
 def st_anchors(ctx):
     snap = load("snapshot")["bots"]
     pts, rows = [], []
+    played = ctx.adaptive(ctx.base, {**BOT, "self_elo": 0, "oppo_elo": 0}, anchors.DIALS, "anchors",
+                          lambda d: f"maia3@{d} (bot sampler)", seed=1000)
     for d in anchors.DIALS:
-        pol = {**BOT, "self_elo": d, "oppo_elo": d}
-        games = ctx.adaptive(ctx.base, pol, "anchors", f"maia3@{d} (bot sampler)", seed=1000 + d)
+        games = played[d]
         r = ctx.rated(games)
         b = snap[f"maia3-79m_{d}"]["blitz"]
         sd = max(b["rd"], units.PROVISIONAL_SD) if d >= units.PROVISIONAL_FROM else b["rd"]
@@ -125,47 +139,27 @@ def st_anchors(ctx):
     return {"snapshot": load("snapshot")["file"], "sampler": BOT, "dials": rows, "fit": f}
 
 
-def lc0_path():
-    for p in (shutil.which("lc0"), os.path.expanduser("~/lc0/build/lc0")):
-        if p and os.path.exists(p):
-            return p
-    return None
-
-
-class Lc0:
-    # A Maia-1 net through lc0 at one node, the way the Lichess maia bots play.
-    def __init__(self, net):
-        self.name = Path(net).stem
-        self.eng = chess.engine.SimpleEngine.popen_uci([lc0_path(), f"--weights={net}"])
-
-    def move(self, board, rng, game=None):
-        return self.eng.play(board, chess.engine.Limit(nodes=1), game=game or rng).move
-
-
 def st_crosscheck(ctx):
-    lc0 = lc0_path()
     nets = {a: os.path.expanduser(f"~/maia1/maia-{n}.pb.gz") for a, n in zip(anchors.MAIA1, (1100, 1500, 1900))}
-    if lc0 is None or not all(os.path.exists(p) for p in nets.values()):
+    if ladder.lc0_path() is None or not all(os.path.exists(p) for p in nets.values()):
         say("cross-check skipped: no lc0 binary on this machine")
         return {"skipped": "no lc0 binary"}
     snap = load("snapshot")["bots"]
     out = []
     for acct, net in nets.items():
-        bot = Lc0(net)
-        games, rng = [], __import__("random").Random(7)
+        rng = random.Random(7)
         near = ctx.units.closest(snap[acct]["blitz"]["rating"], 3)
-        for i, op in enumerate(ctx.suite[6:106]):
-            for white in (True, False):
-                opp = ladder.rung(near[i % 3])
-                s, moves, end = ladder.play(bot if white else opp, opp if white else bot, op, rng.getrandbits(31),
-                                            show="crosscheck")
-                games.append({"opp": near[i % 3], "score": s if white else 1 - s})
-                progress.tick("crosscheck", len(games) + 200 * len(out), 600, "games",
-                              note=f"{acct} ({bot.name}) vs {', '.join(near)}")
-        bot.eng.quit()
+        jobs = [(net, near[i % 3], op, rng.getrandbits(31), white)
+                for i, op in enumerate(ctx.suite[6:106]) for white in (True, False)]
+        games = []
+        # The games run across the engine pool like every other stage, so the rungs play under the same load.
+        for g in arena.pool().imap_unordered(ladder.lc0_game, jobs):
+            games.append(g)
+            progress.tick("crosscheck", len(games) + 200 * len(out), 600, "games",
+                          note=f"{acct} ({Path(net).stem}) vs {', '.join(near)}")
         r = ctx.rated(games)
         lich = ctx.units.lich(r["ladder"])
-        out.append({"bot": acct, "net": bot.name, **r, "predicted_lichess": lich,
+        out.append({"bot": acct, "net": Path(net).stem, **r, "predicted_lichess": lich,
                     "lichess": snap[acct]["blitz"]["rating"], "lichess_rd": snap[acct]["blitz"]["rd"]})
         say(f"cross-check {acct}: predicted {lich:.0f}, Lichess {snap[acct]['blitz']['rating']}")
     return {"bots": out}
@@ -173,18 +167,22 @@ def st_crosscheck(ctx):
 
 def st_base(ctx):
     u, out = ctx.units, []
+    played = ctx.adaptive(ctx.base, {**POLICY, "self_elo": 0, "oppo_elo": 0}, BASE_DIALS, "base",
+                          lambda d: f"maia3@{d}", seed=2000)
     for d in BASE_DIALS:
-        pol = {**POLICY, "self_elo": d, "oppo_elo": d}
-        games = ctx.adaptive(ctx.base, pol, "base", f"maia3@{d}", seed=2000 + d)
+        games = played[d]
         r = ctx.rated(games)
         r.update(dial=d, lichess=u.lich(r["ladder"]), lichess_ci=[u.lich(x) for x in r["ladder_ci"]],
                  threefold=evals.threefold(games), book=evals.book_overlap(games))
         out.append(r)
         save_games(RUN / "games" / f"base_{d}.json", games)
         say(f"base curve {d}: plays at Lichess {r['lichess']:.0f} [{r['lichess_ci'][0]:.0f}, {r['lichess_ci'][1]:.0f}]")
-    worst = max(out, key=lambda r: abs(r["lichess"] - r["dial"]))
-    targets = sorted({worst["dial"], 1500}, key=lambda t: t != 1500)
-    say(f"targets: {targets} (weakest calibration at dial {worst['dial']})")
+    # One target where the dial plays too strong and one where it plays too weak, so the sweep has to push both
+    # ways. The first run used the worst dial and 1500, and the base model was already at 1494 on the 1500 dial.
+    err = lambda r: r["lichess"] - r["dial"]
+    hi, lo = max(out, key=err), min(out, key=err)
+    targets = [hi["dial"], lo["dial"]] if err(hi) > 0 > err(lo) else sorted({max(out, key=lambda r: abs(err(r)))["dial"], 1500})
+    say(f"targets: {targets} (dial {hi['dial']} is off by {err(hi):+.0f}, dial {lo['dial']} by {err(lo):+.0f})")
     return {"policy": POLICY, "curve": out, "targets": targets}
 
 
@@ -217,9 +215,9 @@ def make_eval(ctx, T):
                                    "human_sce": [prev["probe"][band]["sce"], pr[band]["sce"]]}
         prev.clear()
         prev.update(ev)
-        tr.st["sign"] = pull(T, lich)
-        say(f"{tr.name} @{tag}: Elo {lich:.0f} [{ci[0]:.0f}, {ci[1]:.0f}] vs T {T}, top-1 {pr[band]['top1']:.1f}%, "
-            f"outcome pull now {tr.st['sign']:+.2f}")
+        est = tr.st.get("est")
+        say(f"{tr.name} @{tag}: Elo {lich:.0f} [{ci[0]:.0f}, {ci[1]:.0f}] vs T {T}, top-1 {pr[band]['top1']:.1f}%"
+            + (f", running estimate {est:.0f}, pull {tr.st['sign']:+.2f}" if est is not None else ""))
         return ev
     return on_eval
 
@@ -248,7 +246,7 @@ def arm_name(T, wo, wf):
 
 
 def finish_arm(ctx, T, tr: Trainer, base_curve) -> dict:
-    # Winner's-curse guard: the three evaluated checkpoints nearest T get a fresh 400-game gauntlet and the 10k
+    # Winner's-curse guard: the three evaluated checkpoints nearest T get a fresh 800-game gauntlet and the 10k
     # fidelity set, and the final pick is made on those numbers only.
     u = ctx.units
     evs = [e for e in tr.st["evals"] if "elo" in e]
@@ -258,7 +256,7 @@ def finish_arm(ctx, T, tr: Trainer, base_curve) -> dict:
     model = maia.load(ctx.cfg.device)[1].eval()
     for e in top:
         model.load_state_dict(torch.load(tr.out / f"ema_{e['tag']}.pt", map_location=ctx.cfg.device))
-        games = gauntlet.play(ctx.cfg, model, pol, u.closest(T, 3), ctx.suite[:EVAL_OPENINGS], seed=4000,
+        games = gauntlet.play(ctx.cfg, model, pol, u.closest(T, 3), ctx.suite[:EVAL_OPENINGS] * 2, seed=4000,
                               name=tr.name, elo=ctx.elo, label=f"policy@{T} confirm {e['tag']}", cycle=True)
         r = ctx.rated(games)
         pr, _ = evals.probe(ctx.cfg, model, ctx.base_scores(T), T, full=True)
@@ -269,12 +267,16 @@ def finish_arm(ctx, T, tr: Trainer, base_curve) -> dict:
     model.load_state_dict(torch.load(tr.out / f"ema_{final['tag']}.pt", map_location=ctx.cfg.device))
     torch.save(model.state_dict(), tr.out / "final.pt")
     # Conditioning sensitivity: the same openings and seeds at three dial settings.
+    rng, near = random.Random(5000), u.closest(T, 3)
+    todo = [{"opp": near[i % 3], "opening": op, "white": w, "seed": rng.getrandbits(31), "self_elo": d, "oppo_elo": d,
+             "dial": d, "label": f"final@{d}"}
+            for d in (T - 200, T, T + 200) for i, op in enumerate(ctx.suite[:SENS_OPENINGS]) for w in (True, False)]
+    rng.shuffle(todo)
+    played = gauntlet.run(ctx.cfg, model, pol, todo, 5000, tr.name, label="final, dial moved ±200",
+                          versus=", ".join(near))
     sens = {}
     for d in (T - 200, T, T + 200):
-        p = {**POLICY, "self_elo": d, "oppo_elo": d}
-        g = gauntlet.play(ctx.cfg, model, p, u.closest(T, 3), ctx.suite[:SENS_OPENINGS], seed=5000, name=tr.name,
-                          elo=ctx.elo, label=f"final@{d}", cycle=True)
-        r = ctx.rated(g)
+        r = ctx.rated([g for g in played if g["dial"] == d])
         sens[d] = {"elo": u.lich(r["ladder"]), "elo_ci": [u.lich(x) for x in r["ladder_ci"]], **r}
     fgames = json.loads((tr.out / f"confirm_{final['tag']}.games.json").read_text())
     hl = evals.humanlike(evals.moves_of(fgames, 8000))
@@ -282,7 +284,7 @@ def finish_arm(ctx, T, tr: Trainer, base_curve) -> dict:
     torch.cuda.empty_cache()
     return {"T": T, "w_out": tr.w_out, "w_fid": tr.w_fid, "evals": tr.st["evals"], "confirm": conf,
             "final": final, "sensitivity": sens, "humanlike": hl, "recoveries": tr.st["recoveries"],
-            "train_log": tr.st["log"]}
+            "train_log": tr.st["log"], "loss": {"kl_coef": KL_COEF, "pull": PULL, "ctrl_games": CTRL_GAMES}}
 
 
 def st_sweep(ctx):
@@ -339,28 +341,31 @@ def pgn(g: dict, white: str, black: str) -> str:
 def main():
     t0 = time.time()
     ctx = Ctx()
-    for i, name in enumerate(STAGES):
-        progress.tick("pipeline", i, len(STAGES), "stages", force=True, note=f"stage: {name}",
-                      stats={"elapsed": f"{(time.time() - t0) / 3600:.1f} h"})
-        if done(name):
-            continue
-        for attempt in range(3):
-            try:
-                save(name, globals()[f"st_{name}"](ctx))
-                break
-            except Exception:
-                tb = traceback.format_exc()
-                (RUN / f"{name}.error.txt").write_text(tb)
-                say(f"{name} failed (attempt {attempt + 1}): {tb.strip().splitlines()[-1][:120]}")
-                torch.cuda.empty_cache()
-        else:
-            if name in OPTIONAL:
-                save(name, {"skipped": "failed three times, see the error file"})
+    try:
+        for i, name in enumerate(STAGES):
+            progress.tick("pipeline", i, len(STAGES), "stages", force=True, note=f"stage: {name}")
+            if done(name):
                 continue
-            say(f"pipeline stopped at {name}")
-            raise SystemExit(1)
-    progress.tick("pipeline", len(STAGES), len(STAGES), "stages", force=True, note="all stages done")
-    say(f"pipeline finished in {(time.time() - t0) / 3600:.1f} h, results in results/")
+            for attempt in range(3):
+                try:
+                    save(name, globals()[f"st_{name}"](ctx))
+                    break
+                except Exception:
+                    tb = traceback.format_exc()
+                    (RUN / f"{name}.error.txt").write_text(tb)
+                    say(f"{name} failed (attempt {attempt + 1}): {tb.strip().splitlines()[-1][:120]}")
+                    torch.cuda.empty_cache()
+            else:
+                if name in OPTIONAL:
+                    save(name, {"skipped": "failed three times, see the error file"})
+                    continue
+                say(f"pipeline stopped at {name}")
+                raise SystemExit(1)
+        progress.tick("pipeline", len(STAGES), len(STAGES), "stages", force=True, note="all stages done")
+        say(f"pipeline finished in {(time.time() - t0) / 3600:.1f} h, results in results/")
+    finally:
+        arena.close_pool()
+        ladder.close_engines()
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections import deque
 import math
 import random
 import time
@@ -12,11 +13,19 @@ import torch
 from levelrl import arena, evals, gauntlet, maia, progress
 
 # GRPO on Maia-3-79M. Groups of G games start from one booked opening against one rung, half with each colour.
-# Per game r = w_out * s * outcome + w_fid * fidelity, where fidelity is the frozen base model's mean log-prob, at
-# the target band, of the moves the policy played (the judge), and s in [-1, 1] pulls the outcome toward the band:
-# positive while the last measured Lichess Elo is below T, negative above it, fading to zero within PULL points
-# so that near the band only fidelity is left. The spec's plain +outcome only ever pushes up, and the dial
-# already plays above its setting at the low end, so for T=1100 it would push away from the band.
+# The loss is w_out * (PPO on the outcome, pulled toward the band) + w_fid * KL_COEF * KL(policy || base at T).
+#
+# Outcome: the advantage is s * outcome, standardised inside the group, where s in [-1, 1] is the pull: positive
+# while the policy plays below T, negative above it, zero on it. The spec's plain +outcome only ever pushes up,
+# and the dial already plays above its setting at the low end. s comes from a rating of the last CTRL_GAMES
+# training games, refreshed every update. The first run set it from a gauntlet every 25 updates and overshot the
+# band by 100 to 250 Elo each way between evals (1720, 1470, 1602, 1480 for one arm).
+#
+# Fidelity: the first run rewarded the base model's log-prob of the sampled move (the judge). That is only the
+# cross-entropy half of a KL, so the policy raised it by sharpening: entropy fell (1.28 to 0.90 on the judge-only
+# arm), strength rose with it, and move-match on real humans dropped 0.4 to 2.4 points on every arm. The whole
+# KL has its optimum at the base model itself, and it is exact per position, so it is a loss term here and not a
+# sampled reward. The judge's score is still logged.
 # Outcome credit decays by GAMMA a ply back from the end and has the WDL head's prediction subtracted with a
 # coefficient fitted on the previous batch, kept in [0, 1].
 # Profiling: the 4090 runs the model at ~4k positions/s and the step is bound by Stockfish and Python, so
@@ -36,6 +45,8 @@ EVAL_AT = (25, 50, 75)
 EVAL_OPENINGS = 34
 RESIGN_P, RESIGN_N = 0.97, 6
 PULL = 150.0  # Elo from the band at which the outcome term is at full strength
+KL_COEF = 4.0
+CTRL_GAMES, CTRL_MIN = 256, 64  # training games behind the running rating, and how many before it is trusted
 ENTROPY_FLOOR = 0.3  # collapse if entropy falls below this fraction of its first value
 
 
@@ -63,10 +74,12 @@ class Trainer:
         self.ema = copy.deepcopy(base).float().eval()
         for p in self.ema.parameters():
             p.requires_grad_(False)
-        self.opt = torch.optim.AdamW(self.policy.parameters(), lr=LR)
+        self.opt = torch.optim.AdamW(self.policy.parameters(), lr=LR, fused=str(self.dev).startswith("cuda"))
         self.st = {"update": 0, "games": 0, "sign": sign, "c": 0.0, "lr": LR, "clip_high": CLIP, "recoveries": 0,
                    "entropy0": None, "log": [], "evals": []}
         self.rng = random.Random(seed)
+        self.recent = deque(maxlen=CTRL_GAMES)
+        self.elo = {n: e for e, n in units.rungs}
         self.gen = torch.Generator(device=self.dev).manual_seed(seed)
         self.out.mkdir(parents=True, exist_ok=True)
         self.resume()
@@ -120,7 +133,7 @@ class Trainer:
         for i in range(0, len(games), 512):
             ch = games[i:i + 512]
             x = torch.stack([g["hist"].tokens() for g in ch])
-            m = torch.stack([maia.legal(g["board"]) for g in ch])
+            m = torch.stack([g["hist"].legal_mask() for g in ch])
             n = len(ch)
             self.policy.eval()
             logits, value = maia.run(self.policy, x, m, [self.T] * n, [self.T] * n, self.dev)
@@ -144,20 +157,16 @@ class Trainer:
 
     # --- update ---
     def advantages(self, group: list[dict]):
-        # Outcome and judge are each standardised over the group's moves before the weights apply. In raw units
-        # the outcome (-1, 0, 1) swamps a mean log-prob that moves a few hundredths between games, and every
-        # mixed arm would train like the outcome-only arm.
         s, c = self.st["sign"], self.st["c"]
         d = 1.0 if s >= 0 else -1.0
         per, rs = [], []
         for g in group:
             o = 2 * g["score"] - 1
-            fid = sum(r[5] for r in g["rec"]) / max(1, len(g["rec"]))
-            rs.append(self.w_out * s * o + self.w_fid * fid)
+            rs.append(s * o)
             for r in g["rec"]:
-                per.append((r, d * (o * GAMMA ** (g["plies"] - r[6]) - c * r[4]), fid))
-        zo, zf = _z([p[1] for p in per]), _z([p[2] for p in per])
-        return [(p[0], self.w_out * abs(s) * x + self.w_fid * y) for p, x, y in zip(per, zo, zf)], rs
+                per.append((r, d * (o * GAMMA ** (g["plies"] - r[6]) - c * r[4])))
+        zo = _z([p[1] for p in per])
+        return [(p[0], self.w_out * abs(s) * x) for p, x in zip(per, zo)], rs
 
     def fit_c(self, batch: list[dict]):
         ys, vs = [], []
@@ -196,19 +205,22 @@ class Trainer:
                 lp = logp_all.gather(1, idx[:, None])[:, 0]
                 ratio = torch.exp(lp - old)
                 clipped = torch.clamp(ratio, 1 - CLIP, 1 + self.st["clip_high"])
-                loss = -torch.min(ratio * adv, clipped * adv).mean()
+                with torch.no_grad():
+                    blog, _ = maia.run(self.base, x, m, [self.T] * n, [self.T] * n, self.dev)
+                    bl = torch.log_softmax(blog, -1).clamp_min(-1e4)
+                # Illegal moves are -inf on both sides. Clamped, they cancel to zero and carry no gradient.
+                kl = (logp_all.exp() * (logp_all.clamp_min(-1e4) - bl)).sum(-1).mean()
+                loss = -torch.min(ratio * adv, clipped * adv).mean() + self.w_fid * KL_COEF * kl
                 self.opt.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)
                 self.opt.step()
                 with torch.no_grad():
-                    for pe, pp in zip(self.ema.parameters(), self.policy.parameters()):
-                        pe.mul_(EMA).add_(pp.detach(), alpha=1 - EMA)
+                    ema_params = list(self.ema.parameters())
+                    torch._foreach_mul_(ema_params, EMA)
+                    torch._foreach_add_(ema_params, list(self.policy.parameters()), alpha=1 - EMA)
                     p = logp_all.exp()
                     ent = -(p * logp_all.nan_to_num(0.0, neginf=0.0)).sum(-1).mean()
-                    blog, _ = maia.run(self.base, x, m, [self.T] * n, [self.T] * n, self.dev)
-                    bl = torch.log_softmax(blog, -1)
-                    kl = (p * (logp_all - bl).nan_to_num(nan=0.0, neginf=0.0, posinf=0.0)).sum(-1).mean()
                     stats["loss"] += float(loss) * n
                     stats["entropy"] += float(ent) * n
                     stats["kl_base"] += float(kl) * n
@@ -244,6 +256,12 @@ class Trainer:
                                "clip_high": self.st["clip_high"]})
         progress.event(self.name, f"{why}: back to update {self.st['update']}, lr {self.st['lr']:.1e}")
 
+    def steer(self):
+        # The pull follows a rating of the most recent training games, so it reacts within a few updates.
+        if len(self.recent) >= CTRL_MIN:
+            est = self.units.lich(gauntlet.rate(list(self.recent), self.elo))
+            self.st["est"], self.st["sign"] = est, pull(self.T, est)
+
     def evaluate(self, tag: str, on_eval):
         if any(e.get("tag") == tag for e in self.st["evals"]):
             return
@@ -251,11 +269,18 @@ class Trainer:
         self.st["evals"].append(on_eval(self, tag))
         self.save()
 
+    def report(self, note: str, stats: dict | None = None, force: bool = False):
+        s = {"T": self.T, "w_out/w_fid": f"{self.w_out}/{self.w_fid}", "toward band": f"{self.st['sign']:+.2f}"}
+        if stats:
+            s.update(stats)
+        progress.tick(self.name, min(self.st["games"], self.games), self.games, "games", note=note, stats=s, force=force)
+
     def run(self, openings, on_eval) -> dict:
         a = arena.Arena(self.cfg, self.mover, self.feed_fn(openings), self.name, me=lambda s: f"policy@{self.T}")
         groups: dict[str, list] = {}
         ready = []
         t0 = time.time()
+        self.report(f"update {self.st['update']} · collecting rollouts", force=True)
         if not (self.out / "last.pt").exists():
             self.save()  # recover() needs something to go back to before the first periodic checkpoint
         if self.st["update"] in EVAL_AT:
@@ -265,13 +290,16 @@ class Trainer:
                 groups.setdefault(g["group"], []).append(g)
                 if len(groups[g["group"]]) == G:
                     grp = groups.pop(g["group"])
-                    o = [self.w_out * self.st["sign"] * (2 * x["score"] - 1)
-                         + self.w_fid * sum(r[5] for r in x["rec"]) / max(1, len(x["rec"])) for x in grp]
-                    if max(o) - min(o) > 1e-9:  # dynamic sampling: a group with no reward spread teaches nothing
+                    self.recent.extend({"opp": x["opp"], "score": x["score"]} for x in grp)
+                    # Dynamic sampling: with no fidelity term, a group where every game ended the same way has
+                    # nothing to learn from. With one, its positions still feed the KL.
+                    if self.w_fid > 0 or len({x["score"] for x in grp}) > 1:
                         ready.append(grp)
                     self.st["games"] += G
+            self.report(f"update {self.st['update']} · collecting rollouts · {len(ready) * G}/{MIN_BATCH} update games")
             if len(ready) * G < MIN_BATCH:
                 continue
+            self.steer()
             s = self.update(ready)
             ready = []
             if not self.healthy(s):
@@ -279,12 +307,11 @@ class Trainer:
                 continue
             self.st["update"] += 1
             u = self.st["update"]
-            s.update(update=u, games=self.st["games"], c=self.st["c"], sign=self.st["sign"], t=time.time() - t0)
+            s.update(update=u, games=self.st["games"], c=self.st["c"], sign=self.st["sign"], est=self.st.get("est"),
+                     t=time.time() - t0)
             self.st["log"].append(s)
-            progress.tick(self.name, min(self.st["games"], self.games), self.games, "games",
-                          note=f"update {u} · reward {s['reward']:+.3f} · KL {s['kl_base']:.4f} · entropy {s['entropy']:.2f}",
-                          stats={"T": self.T, "w_out/w_fid": f"{self.w_out}/{self.w_fid}", "toward band": f"{self.st['sign']:+.2f}",
-                                 "judge": f"{s['judge']:.2f}", "cv c": f"{self.st['c']:.2f}"})
+            self.report(f"update {u} · reward {s['reward']:+.3f} · KL {s['kl_base']:.4f} · entropy {s['entropy']:.2f}",
+                        stats={"judge": f"{s['judge']:.2f}", "cv c": f"{self.st['c']:.2f}"})
             if u % CKPT_EVERY == 0:
                 self.save()
             if u in EVAL_AT:

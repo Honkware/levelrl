@@ -21,3 +21,22 @@ def test_a_rung_that_never_scores_still_gets_a_finite_rating():
     games = [{"white": "a", "black": "b", "score": 1.0}] * 20 + [{"white": "b", "black": "a", "score": 0.0}] * 20
     elo = ladder.fit(games, ["a", "b"], pin=("a", 1500.0))
     assert elo["b"] < elo["a"] and elo["b"] > -10_000
+
+
+def test_close_engines_quits_and_closes_every_rung(monkeypatch):
+    class Engine:
+        def __init__(self):
+            self.calls = []
+
+        def quit(self):
+            self.calls.append("quit")
+
+        def close(self):
+            self.calls.append("close")
+
+    engines = {"sk0": ladder.Rung("sk0", Engine()), "elo1500": ladder.Rung("elo1500", Engine())}
+    calls = [r.eng.calls for r in engines.values()]
+    monkeypatch.setattr(ladder, "_engines", engines)
+    ladder.close_engines()
+    assert calls == [["quit", "close"], ["quit", "close"]]
+    assert engines == {}

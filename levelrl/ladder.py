@@ -4,7 +4,9 @@ import argparse
 import itertools
 import json
 import math
+import os
 import random
+import shutil
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -17,7 +19,12 @@ from levelrl import openings, progress
 # random legal move with probability p, as the spec asks. One thread, a small fixed hash and a fixed move time,
 # all written into elo_calibration.json so the ladder can be rebuilt exactly.
 ENGINE = {"Threads": 1, "Hash": 16}
-MOVETIME = 0.05
+# A rung searches a fixed number of nodes per move, so it plays the same at any CPU load and on any machine. The
+# first run gave rungs 50 ms instead, which made their strength depend on how busy the box was. LEVELRL_MOVETIME
+# (seconds) brings that back, to reproduce that run's ladder.
+NODES = 30_000
+MOVETIME = float(os.environ["LEVELRL_MOVETIME"]) if os.environ.get("LEVELRL_MOVETIME") else None
+LIMIT = {"time": MOVETIME} if MOVETIME else {"nodes": NODES}
 MAX_PLIES = 400
 RUNGS = {
     "sk0_r50": {"skill": 0, "random": 0.5},
@@ -50,7 +57,15 @@ class Rung:
         if self.cfg["random"] and rng.random() < self.cfg["random"]:
             return rng.choice(list(board.legal_moves))
         # A new game id sends ucinewgame, which clears the hash between games. Each ladder game has its own rng.
-        return self.eng.play(board, chess.engine.Limit(time=MOVETIME), game=rng if game is None else game).move
+        return self.eng.play(board, chess.engine.Limit(**LIMIT), game=rng if game is None else game).move
+
+    def close(self):
+        try:
+            self.eng.quit()
+        except Exception:
+            pass
+        finally:
+            self.eng.close()
 
 
 _engines: dict = {}
@@ -61,6 +76,12 @@ def rung(name: str) -> Rung:
         _engines[name] = Rung(name, chess.engine.SimpleEngine.popen_uci("stockfish"))
         _engines[name].reset()
     return _engines[name]
+
+
+def close_engines():
+    for r in _engines.values():
+        r.close()
+    _engines.clear()
 
 
 def ending(b: chess.Board) -> tuple[float, str]:
@@ -86,6 +107,52 @@ def play(white, black, opening: list[str], seed: int, show: str | None = None) -
         progress.board(show, seed, b, getattr(white, "name", "white"), getattr(black, "name", "black"),
                        result=f"{b.result(claim_draw=True)} · {end}")
     return s, [m.uci() for m in b.move_stack], end
+
+
+def engine_move(args):
+    name, b, seed = args
+    return rung(name).move(b, random.Random(seed * 1000 + b.ply()), game=seed).uci()
+
+
+def lc0_path():
+    for p in (shutil.which("lc0"), os.path.expanduser("~/lc0/build/lc0")):
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
+class Lc0:
+    # A Maia-1 net through lc0 at one node, the way the Lichess maia bots play.
+    def __init__(self, net):
+        self.net, self.name = net, Path(net).stem
+        self.eng = chess.engine.SimpleEngine.popen_uci([lc0_path(), f"--weights={net}", "--threads=1"])
+
+    def move(self, board, rng, game=None):
+        return self.eng.play(board, chess.engine.Limit(nodes=1), game=game or rng).move
+
+    def close(self):
+        try:
+            self.eng.quit()
+        except Exception:
+            pass
+        finally:
+            self.eng.close()
+
+
+_lc0 = None
+
+
+def lc0_game(args):
+    # One cross-check game in a pool worker, which keeps a single lc0 process and swaps it when the net changes.
+    global _lc0
+    net, opp, op, seed, white = args
+    if _lc0 is None or _lc0.net != net:
+        if _lc0 is not None:
+            _lc0.close()
+        _lc0 = Lc0(net)
+    o = rung(opp)
+    s, _, _ = play(_lc0 if white else o, o if white else _lc0, op, seed, show="crosscheck")
+    return {"opp": opp, "score": s if white else 1 - s}
 
 
 def _job(args):
@@ -147,7 +214,7 @@ def run(per_pair: int = 200, span: int = SPAN, procs: int = 10, seed: int = 1) -
         for b in names[i + 1:i + 1 + span]:
             for op in rng.sample(ops, per_pair // 2):
                 jobs += [(a, b, op, rng.getrandbits(32)), (b, a, op, rng.getrandbits(32))]
-    path = OUT.parent / "ladder_games.json"
+    path = OUT.parent / ("ladder_games.json" if MOVETIME else f"ladder_games_nodes{NODES}.json")
     games = json.loads(path.read_text()) if path.exists() else []
     games = [g for g in games if g["white"] in RUNGS and g["black"] in RUNGS]
     order = {n: i for i, n in enumerate(names)}
@@ -172,7 +239,7 @@ def run(per_pair: int = 200, span: int = SPAN, procs: int = 10, seed: int = 1) -
     elo = fit(games, names)
     ci = bootstrap(games, names)
     res = {
-        "engine": "Stockfish 19", "options": ENGINE, "movetime": MOVETIME, "max_plies": MAX_PLIES, "rungs": RUNGS,
+        "engine": "Stockfish 19", "options": ENGINE, "limit": LIMIT, "max_plies": MAX_PLIES, "rungs": RUNGS,
         "pin_mean": PIN, "games": len(games), "elo": elo, "ci": ci,
         "refused": [k for k, (lo, hi) in ci.items() if (hi - lo) / 2 > MAX_HALF_CI],
     }

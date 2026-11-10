@@ -11,13 +11,28 @@ def trainer(w_out, w_fid, sign):
     return t
 
 
-def test_an_even_weighting_gives_the_judge_as_much_say_as_the_outcome():
-    # The win has the worse judge score. In raw units the outcome would decide the sign of every advantage.
-    grp = [game(1.0, -2.05), game(0.0, -2.00)]
-    adv, _ = trainer(0.5, 0.5, 1.0).advantages(grp)
-    assert max(abs(a) for _, a in adv) < 0.02
-    adv, _ = trainer(0.25, 0.75, 1.0).advantages(grp)
-    assert adv[0][1] < 0 < adv[-1][1]
+def test_the_advantage_carries_the_outcome_only_and_the_judge_score_cannot_move_it():
+    lucky, plain = [game(1.0, -9.0), game(0.0, -1.0)], [game(1.0, -1.0), game(0.0, -1.0)]
+    a, _ = trainer(0.5, 0.5, 1.0).advantages(lucky)
+    b, _ = trainer(0.5, 0.5, 1.0).advantages(plain)
+    assert [x for _, x in a] == [x for _, x in b] and a[0][1] > 0 > a[-1][1]
+
+
+def test_the_running_rating_steers_the_pull_toward_the_band():
+    from collections import deque
+    from levelrl import units
+    t = trainer(1.0, 0.0, 1.0)
+    t.T, t.units = 1500, units.Units(0.0, 1.0, {"r1500": 1500.0})
+    t.elo, t.recent = {"r1500": 1500.0}, deque(maxlen=256)
+    t.steer()
+    assert t.st["sign"] == 1.0  # too few games, the starting pull stands
+    t.recent.extend({"opp": "r1500", "score": 1.0 if i % 4 else 0.0} for i in range(100))  # scoring 75%: too strong
+    t.steer()
+    assert t.st["sign"] == -1.0 and t.st["est"] > 1650
+    t.recent.clear()
+    t.recent.extend({"opp": "r1500", "score": float(i % 2)} for i in range(100))  # 50%: on the band
+    t.steer()
+    assert abs(t.st["sign"]) < 0.05
 
 
 def test_the_outcome_pull_reverses_above_the_band_and_fades_inside_it():
@@ -26,3 +41,16 @@ def test_the_outcome_pull_reverses_above_the_band_and_fades_inside_it():
     up, _ = trainer(1.0, 0.0, 1.0).advantages(grp)
     down, _ = trainer(1.0, 0.0, -0.5).advantages(grp)
     assert up[0][1] > 0 > down[0][1] and abs(down[0][1]) < abs(up[0][1])
+
+
+def test_training_progress_can_be_reported_before_the_first_update(monkeypatch):
+    t = trainer(0.5, 0.5, 1.0)
+    t.name, t.T, t.games = "smoke", 1500, 96
+    t.st.update(games=0, update=0)
+    calls = []
+    monkeypatch.setattr("levelrl.train.progress.tick", lambda *args, **kwargs: calls.append((args, kwargs)))
+    t.report("update 0 · collecting rollouts", force=True)
+    args, kwargs = calls[0]
+    assert args == ("smoke", 0, 96, "games")
+    assert kwargs["force"] is True
+    assert kwargs["stats"]["T"] == 1500

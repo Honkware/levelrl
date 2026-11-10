@@ -4,6 +4,7 @@ import json
 import random
 
 import chess
+import numpy as np
 import torch
 
 from levelrl import arena, maia, progress
@@ -22,7 +23,7 @@ def sampler(cfg, model, policy: dict, gen: torch.Generator, bsz: int = 512):
         for i in range(0, len(games), bsz):
             ch = games[i:i + bsz]
             x = torch.stack([g["hist"].tokens() for g in ch])
-            m = torch.stack([maia.legal(g["board"]) for g in ch])
+            m = torch.stack([g["hist"].legal_mask() for g in ch])
             se = [g["spec"].get("self_elo", policy["self_elo"]) for g in ch]
             oe = [g["spec"].get("oppo_elo", policy["oppo_elo"]) for g in ch]
             logits, _ = maia.run(model, x, m, se, oe, dev)
@@ -51,27 +52,38 @@ def play(cfg, model, policy: dict, opponents: list[str], openings: list[list[str
     # Every opening is played with both colours. Each opening meets every opponent, or with cycle one opponent
     # in turn, which keeps a 200-opening suite at 400 games.
     rng = random.Random(seed)
-    gen = torch.Generator(device=cfg.device).manual_seed(seed)
     pairs = ([(opponents[i % len(opponents)], op) for i, op in enumerate(openings)] if cycle
              else [(o, op) for o in opponents for op in openings])
     todo = [{"opp": o, "opening": op, "white": w, "seed": rng.getrandbits(31), **(extra or {})}
             for o, op in pairs for w in (True, False)]
+    return run(cfg, model, policy, todo, seed, name, elo, label or f"maia@{policy['self_elo']}", ", ".join(opponents))
+
+
+def run(cfg, model, policy: dict, todo: list[dict], seed: int = 0, name: str = "gauntlet",
+        elo: dict[str, float] | None = None, label: str = "maia", versus: str = "the ladder") -> list[dict]:
+    # Plays a prepared list of game specs. A spec may carry its own self_elo, oppo_elo and label, so several dial
+    # settings share one arena. A gauntlet on its own spends much of its time on its last few long games with the
+    # engine workers idle, and sharing the arena overlaps those tails.
+    gen = torch.Generator(device=cfg.device).manual_seed(seed)
+    todo = list(todo)
     total, done, est = len(todo), [], None
-    me = label or f"maia@{policy['self_elo']}"
     a = arena.Arena(cfg, sampler(cfg, model, policy, gen), lambda: todo.pop() if todo else None, name,
-                    me=lambda s: me)
+                    me=lambda s: s.get("label", label))
+    progress.tick(name, 0, total, "games", force=True, note=f"{label} vs {versus} · starting")
     while not a.done():
-        done += a.step()
-        if done:
-            if elo and len(done) % 20 < 4:
-                est = rate(done, elo)
-            stats = {"score": f"{sum(x['score'] for x in done) / len(done):.0%}",
-                     "draws": f"{sum(x['score'] == 0.5 for x in done) / len(done):.0%}",
-                     "longest": f"{max(x['plies'] for x in done)} plies"}
-            if est is not None:
-                stats = {"ladder elo so far": f"{est:.0f}", **stats}
-            progress.tick(name, len(done), total, "games", stats=stats,
-                          note=f"{me} vs {', '.join(opponents)} · {len(a.live)} boards at once")
+        new = a.step()
+        if not new:
+            continue  # steps come many times a second now, the stats only move when a game ends
+        done += new
+        if elo and len(done) % 20 < len(new):
+            est = rate(done, elo)
+        stats = {"score": f"{sum(x['score'] for x in done) / len(done):.0%}",
+                 "draws": f"{sum(x['score'] == 0.5 for x in done) / len(done):.0%}",
+                 "longest": f"{max(x['plies'] for x in done)} plies"}
+        if est is not None:
+            stats = {"ladder elo so far": f"{est:.0f}", **stats}
+        progress.tick(name, len(done), total, "games", stats=stats,
+                      note=f"{label} vs {versus} · {len(a.live)} boards at once")
     return done
 
 
@@ -89,8 +101,16 @@ def rate(games: list[dict], elo: dict[str, float]) -> float:
 
 def rate_ci(games: list[dict], elo: dict[str, float], n: int = 1000, seed: int = 0) -> tuple[float, list[float]]:
     rng = random.Random(seed)
-    v = sorted(rate(rng.choices(games, k=len(games)), elo) for _ in range(n))
-    return rate(games, elo), [v[int(0.025 * n)], v[int(0.975 * n)]]
+    samples = [rng.choices(games, k=len(games)) for _ in range(n)]
+    opponents = np.asarray([[elo[g["opp"]] for g in sample] for sample in samples])
+    scores = np.asarray([[g["score"] for g in sample] for sample in samples])
+    lo, hi = np.full(n, -1000.0), np.full(n, 4500.0)
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        excess = scores.sum(axis=1) - (1 / (1 + 10 ** ((opponents - mid[:, None]) / 400))).sum(axis=1)
+        lo, hi = np.where(excess > 0, mid, lo), np.where(excess > 0, hi, mid)
+    v = np.sort((lo + hi) / 2)
+    return rate(games, elo), [float(v[int(0.025 * n)]), float(v[int(0.975 * n)])]
 
 
 def save(path, policy, games, elo):

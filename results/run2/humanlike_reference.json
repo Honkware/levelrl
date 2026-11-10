@@ -1,0 +1,118 @@
+{
+ "1100": {
+  "base": {
+   "n": 8000,
+   "blunder_rate": 0.120875,
+   "blunder_types": {
+    "piece drop": 0.36814891416752843,
+    "tactical oversight": 0.6318510858324715
+   },
+   "by_phase": {
+    "opening": {
+     "n": 1157,
+     "mistake_rate": 0.1961970613656007,
+     "blunder_rate": 0.10890233362143474,
+     "mean_cp_loss": 83.75885911840967
+    },
+    "middlegame": {
+     "n": 3734,
+     "mistake_rate": 0.2897696839850027,
+     "blunder_rate": 0.15961435457953937,
+     "mean_cp_loss": 104.54874129619711
+    },
+    "endgame": {
+     "n": 3109,
+     "mistake_rate": 0.15985847539401737,
+     "blunder_rate": 0.08105500160823416,
+     "mean_cp_loss": 59.23383724670312
+    }
+   }
+  },
+  "human": {
+   "n": 3000,
+   "blunder_rate": 0.142,
+   "blunder_types": {
+    "piece drop": 0.31220657276995306,
+    "tactical oversight": 0.687793427230047
+   },
+   "by_phase": {
+    "opening": {
+     "n": 962,
+     "mistake_rate": 0.2692307692307692,
+     "blunder_rate": 0.14864864864864866,
+     "mean_cp_loss": 109.60914760914761
+    },
+    "middlegame": {
+     "n": 1613,
+     "mistake_rate": 0.2740235585864848,
+     "blunder_rate": 0.15313081215127092,
+     "mean_cp_loss": 110.56912585244885
+    },
+    "endgame": {
+     "n": 425,
+     "mistake_rate": 0.1623529411764706,
+     "blunder_rate": 0.08705882352941176,
+     "mean_cp_loss": 62.19529411764706
+    }
+   }
+  }
+ },
+ "1900": {
+  "base": {
+   "n": 8000,
+   "blunder_rate": 0.077875,
+   "blunder_types": {
+    "piece drop": 0.22792937399678972,
+    "tactical oversight": 0.7720706260032103
+   },
+   "by_phase": {
+    "opening": {
+     "n": 962,
+     "mistake_rate": 0.11330561330561331,
+     "blunder_rate": 0.05405405405405406,
+     "mean_cp_loss": 48.36278586278586
+    },
+    "middlegame": {
+     "n": 3557,
+     "mistake_rate": 0.2178802361540624,
+     "blunder_rate": 0.10092774810233343,
+     "mean_cp_loss": 74.23278043294911
+    },
+    "endgame": {
+     "n": 3481,
+     "mistake_rate": 0.13645504165469693,
+     "blunder_rate": 0.061476587187589776,
+     "mean_cp_loss": 48.29416834243034
+    }
+   }
+  },
+  "human": {
+   "n": 3000,
+   "blunder_rate": 0.091,
+   "blunder_types": {
+    "piece drop": 0.20146520146520147,
+    "tactical oversight": 0.7985347985347986
+   },
+   "by_phase": {
+    "opening": {
+     "n": 759,
+     "mistake_rate": 0.14097496706192358,
+     "blunder_rate": 0.057971014492753624,
+     "mean_cp_loss": 51.02239789196311
+    },
+    "middlegame": {
+     "n": 1839,
+     "mistake_rate": 0.20826536160957043,
+     "blunder_rate": 0.11473626971179988,
+     "mean_cp_loss": 78.94779771615008
+    },
+    "endgame": {
+     "n": 402,
+     "mistake_rate": 0.10696517412935323,
+     "blunder_rate": 0.04477611940298507,
+     "mean_cp_loss": 40.333333333333336
+    }
+   }
+  }
+ }
+}

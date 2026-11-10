@@ -31,3 +31,16 @@ def test_paired_ci_is_deterministic_and_preserves_a_constant_difference():
     a = [0.0, 1.0, 2.0, 3.0]
     b = [0.0, 0.5, 1.0, 1.5]
     assert evals.paired_ci(a, b, n=200) == evals.paired_ci(a, b, n=200)
+
+
+def test_humanlike_streams_position_progress_without_changing_its_results(monkeypatch):
+    class Pool:
+        def imap(self, fn, moves, chunksize):
+            assert chunksize == 16
+            return iter({"phase": "opening", "loss": 0, "kind": None} for _ in moves)
+
+    monkeypatch.setattr(evals.arena, "pool", lambda: Pool())
+    seen = []
+    result = evals.humanlike([object()] * 65, on_progress=seen.append)
+    assert seen == [64, 65]
+    assert result["n"] == 65 and result["by_phase"]["opening"]["n"] == 65

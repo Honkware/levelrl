@@ -117,6 +117,7 @@ class Hist:
     def __init__(self, cfg, board: chess.Board):
         self.cfg, self.h = cfg, deque(maxlen=cfg.history)
         self.use_native = native.available()
+        self.native_board = native.NativeBoard(board) if self.use_native else None
         replay, moves = board.copy(), []
         while replay.move_stack and len(moves) < cfg.history - 1:
             moves.append(replay.pop())
@@ -125,15 +126,15 @@ class Hist:
             replay.push(mv)
             self.h.append(encode_board(replay))
         if self.use_native:
-            current, self.mask = native.features(board)
-            self.h[-1] = current
+            current, self.mask = self.native_board.features()
+            self.h[-1] = current.clone()
         else:
             self.mask = legal(board)
 
     def push(self, board: chess.Board) -> None:
         if self.use_native:
-            current, self.mask = native.features(board)
-            self.h.append(current)
+            current, self.mask = self.native_board.push_features(board.move_stack[-1].uci())
+            self.h.append(current.clone())
         else:
             self.h.append(encode_board(board))
             self.mask = legal(board)

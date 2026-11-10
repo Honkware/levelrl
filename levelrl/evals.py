@@ -173,8 +173,12 @@ def human_moves(T: int, n: int = 3000) -> list[tuple]:
     return out
 
 
-def humanlike(moves: list[tuple]) -> dict:
-    res = arena.pool().map(_analyse, moves, chunksize=16)
+def humanlike(moves: list[tuple], on_progress=None) -> dict:
+    res = []
+    for r in arena.pool().imap(_analyse, moves, chunksize=16):
+        res.append(r)
+        if on_progress and (len(res) % 64 == 0 or len(res) == len(moves)):
+            on_progress(len(res))
     n = len(res)
     by = {}
     for ph in ("opening", "middlegame", "endgame"):

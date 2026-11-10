@@ -19,3 +19,23 @@ def test_native_features_match_python_and_maia_on_1204_positions():
         tokens, mask = native.features(board)
         assert torch.equal(tokens, maia.encode_board(board)), board.fen()
         assert torch.equal(mask, maia.legal(board)), board.fen()
+
+
+def test_persistent_native_board_matches_stateless_features_across_games():
+    import random
+
+    rng = random.Random(3)
+    for _ in range(100):
+        board = chess.Board()
+        native_board = native.NativeBoard(board)
+        try:
+            for _ in range(12):
+                move = rng.choice(list(board.legal_moves))
+                board.push(move)
+                native_board.push_uci(move.uci())
+                expected_tokens, expected_mask = native.features(board)
+                tokens, mask = native_board.features()
+                assert torch.equal(tokens, expected_tokens)
+                assert torch.equal(mask, expected_mask)
+        finally:
+            native_board.close()

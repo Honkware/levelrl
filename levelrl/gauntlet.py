@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 
 import chess
@@ -13,7 +14,7 @@ from levelrl import arena, maia, progress
 # it is to move, while the rungs' moves for the other games run in a process pool alongside it.
 
 
-def sampler(cfg, model, policy: dict, gen: torch.Generator, bsz: int = 512):
+def sampler(cfg, model, policy: dict, gen: torch.Generator, bsz: int = int(os.environ.get("LEVELRL_MOVER_BSZ", "1024"))):
     # Mover for the arena: one batched forward over every game where this policy is to move, then a sample.
     # policy may carry a per-spec self_elo through spec["self_elo"].
     dev = cfg.device

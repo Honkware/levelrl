@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from collections import deque
 import math
 import random
@@ -32,6 +33,7 @@ from levelrl import arena, evals, gauntlet, maia, progress
 # torch.compile buys nothing measurable here and is left out. Incremental encoding is on (see maia.Hist).
 
 G = 8
+MOVER_BSZ = int(os.environ.get("LEVELRL_MOVER_BSZ", "1024"))
 MIN_BATCH = 32
 LR = 1e-5
 CLIP = 0.2
@@ -130,8 +132,8 @@ class Trainer:
     @torch.no_grad()
     def mover(self, games):
         out = []
-        for i in range(0, len(games), 512):
-            ch = games[i:i + 512]
+        for i in range(0, len(games), MOVER_BSZ):
+            ch = games[i:i + MOVER_BSZ]
             x = torch.stack([g["hist"].tokens() for g in ch])
             m = torch.stack([g["hist"].legal_mask() for g in ch])
             n = len(ch)
@@ -270,7 +272,12 @@ class Trainer:
         self.save()
 
     def report(self, note: str, stats: dict | None = None, force: bool = False):
-        s = {"T": self.T, "w_out/w_fid": f"{self.w_out}/{self.w_fid}", "toward band": f"{self.st['sign']:+.2f}"}
+        latest = self.st.get("latest_eval", {})
+        if stats:
+            latest.update({k: v for k, v in stats.items() if k in ("elo", "top1")})
+        self.st["latest_eval"] = latest
+        s = {"T": self.T, "w_out/w_fid": f"{self.w_out}/{self.w_fid}", "toward band": f"{self.st['sign']:+.2f}",
+             **latest}
         if stats:
             s.update(stats)
         progress.tick(self.name, min(self.st["games"], self.games), self.games, "games", note=note, stats=s, force=force)
@@ -296,7 +303,7 @@ class Trainer:
                     if self.w_fid > 0 or len({x["score"] for x in grp}) > 1:
                         ready.append(grp)
                     self.st["games"] += G
-            self.report(f"update {self.st['update']} · collecting rollouts · {len(ready) * G}/{MIN_BATCH} update games")
+            self.report(f"update {self.st['update']} · {len(ready) * G} games ready for optimizer update ({MIN_BATCH} required)")
             if len(ready) * G < MIN_BATCH:
                 continue
             self.steer()

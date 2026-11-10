@@ -49,3 +49,13 @@ def test_first_tick_preserves_an_event_that_initialized_the_job(monkeypatch, tmp
     j = json.loads((tmp_path / "ladder.json").read_text())
     assert j["start"] == 100.0
     assert j["events"] == [[101.0, "first game"]]
+
+
+def test_concurrent_progress_writes_use_distinct_temp_files(monkeypatch, tmp_path):
+    import concurrent.futures
+
+    monkeypatch.setattr(progress, "ROOT", tmp_path)
+    path = tmp_path / "board.json"
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda i: progress._write(path, {"value": i}), range(100)))
+    assert json.loads(path.read_text())["value"] == 99

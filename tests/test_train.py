@@ -54,3 +54,19 @@ def test_training_progress_can_be_reported_before_the_first_update(monkeypatch):
     assert args == ("smoke", 0, 96, "games")
     assert kwargs["force"] is True
     assert kwargs["stats"]["T"] == 1500
+
+
+def test_latest_evaluation_metrics_survive_later_training_reports(monkeypatch):
+    t = trainer(0.5, 0.5, 1.0)
+    t.name, t.T, t.games = "smoke", 1500, 3000
+    t.st.update(games=800, update=25)
+    calls = []
+    monkeypatch.setattr("levelrl.train.progress.tick", lambda *args, **kwargs: calls.append(kwargs))
+    t.report("checkpoint 25", stats={"elo": "1510", "top1": "52.4%"})
+    t.report("update 26", stats={"judge": "0.50"})
+    assert calls[-1]["stats"]["elo"] == "1510"
+    assert calls[-1]["stats"]["top1"] == "52.4%"
+    resumed = trainer(0.5, 0.5, 1.0)
+    resumed.name, resumed.T, resumed.games, resumed.st = t.name, t.T, t.games, t.st
+    resumed.report("update 27")
+    assert calls[-1]["stats"]["elo"] == "1510" and calls[-1]["stats"]["top1"] == "52.4%"

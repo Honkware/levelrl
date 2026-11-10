@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -17,7 +18,7 @@ _board = {"t": 0.0, "game": None}
 
 def _write(path: Path, obj: dict) -> None:
     ROOT.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(obj))
     os.replace(tmp, path)
 

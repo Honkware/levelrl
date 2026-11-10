@@ -8,4 +8,4 @@ name = "levelrl_native"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-cozy-chess = { version = "0.3.4", features = ["std"] }
+cozy-chess = { version = "0.3.4", features = ["std", "pext"] }

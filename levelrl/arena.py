@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
 import queue
 import random
 import time
@@ -20,6 +21,7 @@ from levelrl import ladder, maia, progress
 _pool = None
 ENGINE_TIMEOUT = 60
 PROCS = 22  # of 24 threads: one stays free for this process and one for the GPU driver thread
+BSZ = int(os.environ.get("LEVELRL_ARENA_BSZ", 4 * PROCS))
 BATCH_WAIT = 0.01  # seconds to let more engine replies arrive, so Maia's forward is not run for one game at a time
 
 
@@ -69,7 +71,7 @@ def _turn(args):
 
 
 class Arena:
-    def __init__(self, cfg, mover, feed, name: str, bsz: int = 4 * PROCS, me=lambda s: "maia"):
+    def __init__(self, cfg, mover, feed, name: str, bsz: int = BSZ, me=lambda s: "maia"):
         # bsz is how many games are in play at once. Four per worker keeps the engine queue from running dry, and
         # more only makes each game take longer, which in training means moves sampled from an older policy.
         self.cfg, self.mover, self.feed, self.name, self.bsz, self.me = cfg, mover, feed, name, bsz, me

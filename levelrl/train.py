@@ -307,8 +307,9 @@ class Trainer:
                 continue
             self.st["update"] += 1
             u = self.st["update"]
-            s.update(update=u, games=self.st["games"], c=self.st["c"], sign=self.st["sign"], est=self.st.get("est"),
-                     t=time.time() - t0)
+            s.update(update=u, games=self.st["games"], c=self.st["c"], sign=self.st["sign"], t=time.time() - t0)
+            if self.st.get("est") is not None:  # absent until the running rating has enough games
+                s["est"] = self.st["est"]
             self.st["log"].append(s)
             self.report(f"update {u} · reward {s['reward']:+.3f} · KL {s['kl_base']:.4f} · entropy {s['entropy']:.2f}",
                         stats={"judge": f"{s['judge']:.2f}", "cv c": f"{self.st['c']:.2f}"})

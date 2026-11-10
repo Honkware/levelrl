@@ -13,8 +13,8 @@ def test_two_independent_arms_run_concurrently_and_save_in_order(monkeypatch, tm
         units = object()
 
     class Trainer:
-        def __init__(self, cfg, base, out, T, wo, wf, sign, units, games, seed, name):
-            self.name = name
+        def __init__(self, cfg, base, out, T, goal, start, units, games, seed, name):
+            self.name, self.goal, self.out = name, goal, out
             self.st = {"games": games}
 
         def run(self, openings, on_eval):
@@ -24,29 +24,29 @@ def test_two_independent_arms_run_concurrently_and_save_in_order(monkeypatch, tm
 
     monkeypatch.setattr(pipeline, "Trainer", Trainer)
     monkeypatch.setattr(pipeline, "make_eval", lambda ctx, T: lambda tr, tag: {"tag": tag})
-    monkeypatch.setattr(pipeline, "ARMS", ((1.0, 0.0), (0.0, 1.0)))
-    monkeypatch.setattr(pipeline, "load", lambda name: {"targets": [1500], "curve": []})
+    monkeypatch.setattr(pipeline, "GOALS", (0.5, 1.0))
+    monkeypatch.setattr(pipeline, "load", lambda name: {"targets": [1500], "curve": [{"dial": 1500, "lichess": 1600.0}]})
     monkeypatch.setattr(pipeline, "done", lambda name: False)
     monkeypatch.setattr(pipeline, "RUN", tmp_path)
     (tmp_path / "games").mkdir()
     (tmp_path / "games" / "base_1500.json").write_text("[]")
     monkeypatch.setattr(pipeline.evals, "moves_of", lambda games, limit: [])
-    monkeypatch.setattr(pipeline.evals, "human_moves", lambda T: [])
+    monkeypatch.setattr(pipeline.evals, "human_moves", lambda T, n: [])
     monkeypatch.setattr(pipeline.evals, "humanlike", lambda moves, on_progress=None: {})
     monkeypatch.setattr(pipeline, "say", lambda text: None)
     saved, ticks = [], []
     monkeypatch.setattr(pipeline, "save", lambda name, obj: saved.append(name))
     monkeypatch.setattr(pipeline.progress, "tick", lambda *args, **kwargs: ticks.append((args, kwargs)))
-    monkeypatch.setattr(pipeline, "finish_arm", lambda ctx, T, tr, base: {
-        "final": {"elo": 1500, "elo_ci": [1400, 1600], "fidelity": {"top1": 50.0}}})
+    monkeypatch.setattr(pipeline, "finish_arm", lambda ctx, T, tr, frac, start: {
+        "final": {"elo": 1500, "elo_ci": [1400, 1600], "fidelity": {"top1": 50.0}}, "held": {"in_band": 1.0}})
 
     result = pipeline.st_sweep(Ctx())
 
     assert len(intervals) == 2
     first, second = sorted(intervals, key=lambda item: item[1])
     assert second[1] < first[2], intervals
-    assert result["arms"] == ["T1500_out1.0_fid0.0", "T1500_out0.0_fid1.0"]
-    assert saved == ["arm_T1500_out1.0_fid0.0", "arm_T1500_out0.0_fid1.0"]
+    assert result["arms"] == ["T1500_goal50", "T1500_goal100"]
+    assert saved == ["arm_T1500_goal50", "arm_T1500_goal100"]
     comparison = [args for args, _ in ticks if args[0] == "comparison"]
     assert comparison[0][:3] == ("comparison", 0, 0)
     assert comparison[-1][:3] == ("comparison", 0, 0)
@@ -73,10 +73,10 @@ def test_evaluation_progress_does_not_replace_the_training_job(monkeypatch, tmp_
     reports = []
 
     class Trainer:
-        name = "T1500_test"
+        name, goal = "T1500_test", 1500.0
         ema = object()
         out = tmp_path
-        st = {"log": [], "sign": 1.0, "update": 25, "games": 800}
+        st = {"log": [], "sign": 1.0, "update": 25, "games": 800, "bias": 0.0}
 
         def report(self, note, stats=None, force=False):
             reports.append((note, stats, force))
@@ -96,7 +96,7 @@ def test_evaluation_progress_does_not_replace_the_training_job(monkeypatch, tmp_
 def test_sweep_progress_is_monotonic_across_arms(monkeypatch):
     calls = []
     monkeypatch.setattr(pipeline.progress, "tick", lambda *args, **kwargs: calls.append((args, kwargs)))
-    monkeypatch.setattr(pipeline, "ARMS", ((1.0, 0.0), (0.0, 1.0)))
+    monkeypatch.setattr(pipeline, "GOALS", (0.5, 1.0))
     tracker = pipeline.SweepProgress([1500])
 
     class Trainer:
@@ -107,7 +107,7 @@ def test_sweep_progress_is_monotonic_across_arms(monkeypatch):
     tracker.complete("a")
     tracker.add(Trainer("c", 400))
     args, _ = calls[-1]
-    assert args[:3] == ("sweep", 3000 + 400, 6000)
+    assert args[:3] == ("sweep", pipeline.ARM_GAMES + 400, 2 * pipeline.ARM_GAMES)
     tracker.close()
 
 
@@ -115,9 +115,9 @@ def test_final_checks_report_one_accumulating_total(monkeypatch, tmp_path):
     reports = []
 
     class Trainer:
-        name, out, w_out, w_fid = "T1500_a", tmp_path, 1.0, 0.0
+        name, out, goal = "T1500_a", tmp_path, 1500.0
         st = {"evals": [{"tag": "25", "elo": 1400}, {"tag": "50", "elo": 1600}],
-              "log": [], "recoveries": 0}
+              "log": [], "recoveries": 0, "sign": 1.0, "bias": 0.0}
 
         def report(self, note, stats=None, force=False):
             reports.append((note, stats))
@@ -128,6 +128,9 @@ def test_final_checks_report_one_accumulating_total(monkeypatch, tmp_path):
 
         def lich(self, value):
             return value
+
+        def ci(self, value, ci):
+            return ci
 
     class Ctx:
         cfg = type("Cfg", (), {"device": "cpu"})()
@@ -155,9 +158,10 @@ def test_final_checks_report_one_accumulating_total(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline.evals, "moves_of", lambda games, limit: [])
     monkeypatch.setattr(pipeline.evals, "humanlike", lambda moves: {})
 
-    result = pipeline.finish_arm(Ctx(), 1500, Trainer(), [])
+    result = pipeline.finish_arm(Ctx(), 1500, Trainer(), 1.0, 1600.0)
     final = [stats for _, stats in reports if stats.get("final_total")]
-    assert [stats["final_before"] for stats in final] == [0, 0, 8, 16, 28]
-    assert all(stats["final_total"] == 28 and stats["final_steps"] == 3 for stats in final)
+    assert [stats["final_before"] for stats in final] == [0, 8, 28]
+    assert all(stats["final_total"] == 28 and stats["final_steps"] == 2 for stats in final)
+    assert result["band_pick"] is None  # neither eval measured inside the band
     assert final[-1]["final_active"] is False
     assert result["final"]["fidelity"]["top1"] == 50.0

@@ -36,11 +36,13 @@ def write(run: Path, res: Path) -> dict:
                   "top1": e["probe"].get(f"band_{T}", e["probe"]["calib"])["top1"],
                   "sce": e["probe"].get(f"band_{T}", e["probe"]["calib"])["sce"]} for e in a["evals"] if "elo" in e]
         paretos.setdefault(str(T), {})[name] = {
-            "w_out": a["w_out"], "w_fid": a["w_fid"], "final_tag": f["tag"], "elo": f["elo"], "elo_ci": f["elo_ci"],
-            "distance_to_T": f["elo"] - T, "fidelity_top1": fid.get("top1"), "fidelity_sce": fid.get("sce"),
+            "goal": a["goal"], "start": a["start"], "frac": a["frac"], "elo": f["elo"], "elo_ci": f["elo_ci"],
+            "elo_ci_units": f.get("elo_ci_units"), "ladder": f["ladder"]["ladder"], "distance_to_goal": f["elo"] - a["goal"],
+            "fidelity_top1": fid.get("top1"), "fidelity_sce": fid.get("sce"),
             "fidelity_top1_vs_base_ci": fid.get("top1_vs_base_ci"), "fidelity_sce_vs_base_ci": fid.get("sce_vs_base_ci"),
             "keep_point_fidelity_drop": fid.get("top1_vs_base_ci") is not None and fid["top1_vs_base_ci"][1] < -FID_DROP_PP,
             "kl_base": next((x["kl_base"] for x in reversed(a.get("train_log", [])) if "kl_base" in x), None),
+            "weight": a.get("weight"), "held": a.get("held", {}), "bias": a.get("bias"), "band_pick": a.get("band_pick"),
             "curve": curve, "sensitivity": a["sensitivity"], "humanlike": a["humanlike"], "recoveries": a["recoveries"]}
         # Hack catalog: per-arm drift signals, and every eval where the judge rose while human fidelity fell.
         for e in a["evals"]:
@@ -65,7 +67,9 @@ def write(run: Path, res: Path) -> dict:
     (res / "anchors.json").write_text(json.dumps(anchors, indent=1))
     (res / "crosscheck.json").write_text(json.dumps(cross, indent=1))
     (res / "humanlike_reference.json").write_text(json.dumps(sweep["humanlike_reference"], indent=1))
-    summary(res, anchors, base, cross, paretos, catalog, sweep)
+    man = rd("manifest") if (run / "manifest.json").exists() else {}
+    (res / "manifest.json").write_text(json.dumps(man, indent=1))
+    summary(res, anchors, base, cross, paretos, catalog, sweep, man)
     try:
         plots(res, anchors, base, paretos)
     except Exception as e:  # the tables are the result, a plotting failure must not cost them
@@ -96,11 +100,11 @@ def plots(res, anchors, base, paretos):
             if a["fidelity_top1"] is None:
                 continue
             ax.errorbar(a["elo"], a["fidelity_top1"], xerr=[[a["elo"] - a["elo_ci"][0]], [a["elo_ci"][1] - a["elo"]]],
-                        fmt="o", capsize=3, label=f"{a['w_out']}/{a['w_fid']}")
-        ax.axvline(int(T), color="k", ls=":", lw=1)
-        ax.set_xlabel("Lichess blitz Elo (final checkpoint)")
+                        fmt="o", capsize=3, label=f"goal {a['goal']:.0f}")
+            ax.axvline(a["goal"], color="k", ls=":", lw=0.5)
+        ax.set_xlabel("Lichess blitz Elo (last checkpoint)")
         ax.set_ylabel(f"top-1 on held-out humans at {T} (%)")
-        ax.set_title(f"T = {T}, arms w_out/w_fid")
+        ax.set_title(f"Dial {T}")
         ax.legend()
         fig.tight_layout()
         fig.savefig(res / f"pareto_T{T}.png", dpi=130)
@@ -109,24 +113,31 @@ def plots(res, anchors, base, paretos):
 
 def _hl(name: str, h: dict) -> str:
     ph = h["by_phase"]
-    cell = lambda k: f"{100 * ph[k]['mistake_rate']:.1f}" if k in ph else "n/a"
-    return (f"| {name} | {h['n']} | {100 * h['blunder_rate']:.1f} | {100 * h['blunder_types']['piece drop']:.0f} | "
+    pm = lambda p, n: f"{100 * p:.1f} ± {196 * (p * (1 - p) / max(1, n)) ** 0.5:.1f}"
+    cell = lambda k: pm(ph[k]["mistake_rate"], ph[k]["n"]) if k in ph else "n/a"
+    return (f"| {name} | {h['n']} | {pm(h['blunder_rate'], h['n'])} | {100 * h['blunder_types']['piece drop']:.0f} | "
             f"{cell('opening')} | {cell('middlegame')} | {cell('endgame')} |")
 
 
-def summary(res, anchors, base, cross, paretos, catalog, sweep):
+def _arm(a: dict) -> str:
+    return f"{a['frac']:.0%} of the way, {a['goal']:.0f}"
+
+
+def summary(res, anchors, base, cross, paretos, catalog, sweep, man=None):
     f = anchors["fit"][anchors["fit"]["use"]]
-    L = ["# LevelRL results", "",
+    L = ["# LevelRL results", "", f"Code: commit {(man or {}).get('commit') or 'not recorded'}.", "",
          f"Units: Lichess blitz = {f['a']:.0f} + {f['b']:.3f} x ladder ({anchors['fit']['use']} fit, "
          f"slope 95% CI {f['b_ci'][0]:.3f} to {f['b_ci'][1]:.3f}), snapshot {anchors['snapshot']}. "
-         "Every Elo interval below is the gauntlet's bootstrap interval carried through this fit. It leaves out "
-         "the uncertainty of the fit itself, so absolute Lichess numbers are looser than the intervals read, "
-         "while differences between arms at one target are not affected much.", "",
+         "Elo intervals marked \"in run\" are the gauntlet's bootstrap interval carried through this fit, which is "
+         "what compares arms with each other. Those marked \"with units\" add the fit's own uncertainty, which is "
+         "what an absolute Lichess number carries. The fit is only tested on Maia-3 players: see the cross-check.", "",
          "## Anchors", "", "| dial | ladder | Lichess | fit residual |", "|---|---|---|---|"]
     L += [f"| {r['dial']} | {r['ladder']:.0f} | {r['lichess']} | {x:+.0f} |" for r, x in zip(anchors["dials"], f["resid"])]
-    L += ["", "## Base conditioning curve", "", "| dial | Lichess Elo | 95% CI | off by | games |", "|---|---|---|---|---|"]
-    L += [f"| {r['dial']} | {r['lichess']:.0f} | {r['lichess_ci'][0]:.0f} to {r['lichess_ci'][1]:.0f} | "
-          f"{r['lichess'] - r['dial']:+.0f} | {r['games']} |" for r in base["curve"]]
+    L += ["", "## Base conditioning curve", "", "| dial | ladder | Lichess Elo | 95% CI in run | with units | off by | games |",
+          "|---|---|---|---|---|---|---|"]
+    cu = lambda r: (f"{r['lichess_ci_units'][0]:.0f} to {r['lichess_ci_units'][1]:.0f}" if r.get("lichess_ci_units") else "n/a")
+    L += [f"| {r['dial']} | {r['ladder']:.0f} | {r['lichess']:.0f} | {r['lichess_ci'][0]:.0f} to {r['lichess_ci'][1]:.0f} | "
+          f"{cu(r)} | {r['lichess'] - r['dial']:+.0f} | {r['games']} |" for r in base["curve"]]
     L += ["", f"Targets: {base['targets']}.", ""]
     if cross.get("bots"):
         L += ["## Maia-1 cross-check", "", "| bot | predicted | Lichess | error |", "|---|---|---|---|"]
@@ -135,32 +146,58 @@ def summary(res, anchors, base, cross, paretos, catalog, sweep):
         L.append("")
     ref = sweep.get("humanlike_reference", {})
     for T, arms in paretos.items():
-        L += [f"## T = {T}", "", "| arm w_out/w_fid | checkpoint | Elo | 95% CI | vs T | fidelity top-1 | vs base (pp, 95% CI) | KL to base at the end |",
-              "|---|---|---|---|---|---|---|---|"]
+        start = next(iter(arms.values()))["start"]
+        L += [f"## Dial {T}", "", f"The base model plays {start:.0f} here. Each arm's goal is a share of the way to {T}, "
+              "and the checkpoint reported is the last one, with no selection.", "",
+              "Where each arm landed:", "",
+              "| goal | ladder | Elo | 95% CI in run | with units | vs goal | in band, last third | rating sd, last third | outcome weight at the end |",
+              "|---|---|---|---|---|---|---|---|---|"]
         for a in arms.values():
-            ci = a["fidelity_top1_vs_base_ci"]
+            h, cu = a.get("held") or {}, a.get("elo_ci_units")
+            L.append(f"| {_arm(a)} | {a['ladder']:.0f} | {a['elo']:.0f} | {a['elo_ci'][0]:.0f} to {a['elo_ci'][1]:.0f} | "
+                     + (f"{cu[0]:.0f} to {cu[1]:.0f}" if cu else "n/a") + f" | {a['distance_to_goal']:+.0f} | "
+                     + (f"{h['in_band']:.0%} | {h['sd']:.0f}" if h else "n/a | n/a")
+                     + (f" | {a['weight']:+.2f} |" if a.get("weight") is not None else " | n/a |"))
+        L += ["", "What it cost in human-likeness, on 10,000 held-out human positions at this band:", "",
+              "| goal | Elo moved | top-1 | vs base (pp, 95% CI) | log-loss vs base (nats, 95% CI) | KL to base |",
+              "|---|---|---|---|---|---|"]
+        for a in arms.values():
+            ci, sc = a["fidelity_top1_vs_base_ci"], a["fidelity_sce_vs_base_ci"]
             top1 = f"{a['fidelity_top1']:.1f}" if a["fidelity_top1"] is not None else "n/a"
-            L.append(f"| {a['w_out']}/{a['w_fid']} | {a['final_tag']} | {a['elo']:.0f} | {a['elo_ci'][0]:.0f} to "
-                     f"{a['elo_ci'][1]:.0f} | {a['distance_to_T']:+.0f} | {top1} | "
-                     + (f"{ci[0]:+.1f} to {ci[1]:+.1f} |" if ci else "n/a |")
-                     + (f" {a['kl_base']:.3f} |" if a.get("kl_base") is not None else " n/a |"))
-        L += ["", "Elo during training, at each eval:", "", "| arm | " + " | ".join(
+            L.append(f"| {_arm(a)} | {a['elo'] - start:+.0f} | {top1} | "
+                     + (f"{ci[0]:+.1f} to {ci[1]:+.1f}" if ci else "n/a") + " | "
+                     + (f"{sc[0]:+.3f} to {sc[1]:+.3f}" if sc else "n/a") + " | "
+                     + (f"{a['kl_base']:.3f} |" if a.get("kl_base") is not None else "n/a |"))
+        L += ["", "Band-aware pick: of the evals that measured within 50 Elo of the goal, the checkpoint with the best "
+              "move-match, with its Elo from a fresh gauntlet. This one is selected, so read it beside the last "
+              "checkpoint above, not in place of it.", "",
+              "| goal | checkpoint | Elo | 95% CI in run | vs goal | top-1 | vs base (pp, 95% CI) |", "|---|---|---|---|---|---|---|"]
+        for a in arms.values():
+            b = a.get("band_pick")
+            if not b:
+                L.append(f"| {_arm(a)} | none measured in the band | | | | | |")
+                continue
+            fd = b.get("fidelity") or {}
+            ci = fd.get("top1_vs_base_ci")
+            L.append(f"| {_arm(a)} | {b['tag']} | {b['elo']:.0f} | {b['elo_ci'][0]:.0f} to {b['elo_ci'][1]:.0f} | "
+                     f"{b['elo'] - a['goal']:+.0f} | " + (f"{fd['top1']:.1f}" if fd.get("top1") is not None else "n/a") + " | "
+                     + (f"{ci[0]:+.1f} to {ci[1]:+.1f} |" if ci else "n/a |"))
+        L += ["", "Elo during training, at each eval:", "", "| goal | " + " | ".join(
             c["tag"] for c in max((a["curve"] for a in arms.values()), key=len)) + " |",
               "|---|" + "---|" * max(len(a["curve"]) for a in arms.values())]
-        L += [f"| {a['w_out']}/{a['w_fid']} | " + " | ".join(f"{c['elo']:.0f}" for c in a["curve"]) + " |"
-              for a in arms.values()]
+        L += [f"| {_arm(a)} | " + " | ".join(f"{c['elo']:.0f}" for c in a["curve"]) + " |" for a in arms.values()]
         L += ["", "Conditioning sensitivity of each final checkpoint (Elo when the dial is moved):", "",
-              "| arm | T-200 | T | T+200 | span |", "|---|---|---|---|---|"]
+              "| goal | dial-200 | dial | dial+200 | span |", "|---|---|---|---|---|"]
         for a in arms.values():
             e = [v["elo"] for _, v in sorted(a["sensitivity"].items(), key=lambda kv: int(kv[0]))]
-            L.append(f"| {a['w_out']}/{a['w_fid']} | " + " | ".join(f"{x:.0f}" for x in e) + f" | {e[-1] - e[0]:+.0f} |")
-        L += ["", "Human-likeness, outside the reward (percent of moves, Stockfish at 100k nodes):", "",
+            L.append(f"| {_arm(a)} | " + " | ".join(f"{x:.0f}" for x in e) + f" | {e[-1] - e[0]:+.0f} |")
+        L += ["", "Human-likeness, outside the reward (percent of moves ± 95%, Stockfish at 100k nodes):", "",
               "| player | moves | blunders | of which piece drops | opening mistakes | middlegame | endgame |",
               "|---|---|---|---|---|---|---|"]
         r = ref.get(T) or ref.get(int(T)) or {}
         L += [_hl(f"humans at {T}", r["human"])] if "human" in r else []
         L += [_hl("base model", r["base"])] if "base" in r else []
-        L += [_hl(f"{a['w_out']}/{a['w_fid']}", a["humanlike"]) for a in arms.values()]
+        L += [_hl(_arm(a), a["humanlike"]) for a in arms.values()]
         L.append("")
     L += ["## Hack catalog", "", f"{len(catalog)} entries, in hack_catalog.json with example PGNs.", ""]
     L += [f"- {c['arm']}: {c['kind']}" + (f" at eval {c['eval']}" if "eval" in c else f", {c['from']:.3f} to {c['to']:.3f}")

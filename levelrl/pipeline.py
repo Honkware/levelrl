@@ -17,7 +17,7 @@ import chess.pgn
 import torch
 
 from levelrl import anchors, arena, data, evals, gauntlet, ladder, maia, openings, progress, units
-from levelrl.train import CTRL_GAMES, KL_COEF, PULL, Trainer, pull
+from levelrl.train import BAND, CTRL_GAMES, ETA, KP, PULL, Trainer
 
 # The whole run, unattended. Each stage writes runs/pipeline/<stage>.json when it finishes, so a rerun picks up
 # where the last one stopped, and a sweep arm resumes from its last checkpoint. Nothing here publishes anything:
@@ -30,12 +30,13 @@ CALIB = ROOT / "runs" / "elo_calibration.json"
 BOT = {"history": True, "temp": 1.1, "top_p": 0.94}  # data/anchors/bot_sampling.json
 POLICY = {"history": True, "temp": 1.0, "top_p": 1.0}
 BASE_DIALS = (1100, 1300, 1500, 1700, 1900)
-ARMS = ((1.0, 0.0), (0.0, 1.0), (0.5, 0.5), (0.75, 0.25), (0.25, 0.75))  # endpoints first
-ARM_GAMES = 3000
+GOALS = (0.25, 0.5, 0.75, 1.0)  # each arm's goal, as a share of the way from where the base model plays to T
+ARM_GAMES = 4800
 SWEEP_WORKERS = 2
-SMOKE_GAMES = 96
+SMOKE_GAMES = 320
 EVAL_OPENINGS = 200
 SENS_OPENINGS = 100
+HUMANLIKE_MOVES = 16_000
 STAGES = ("snapshot", "anchors", "crosscheck", "base", "smoke", "sweep", "report")
 OPTIONAL = ("crosscheck",)
 
@@ -182,6 +183,7 @@ def st_base(ctx):
         games = played[d]
         r = ctx.rated(games)
         r.update(dial=d, lichess=u.lich(r["ladder"]), lichess_ci=[u.lich(x) for x in r["ladder_ci"]],
+                 lichess_ci_units=u.ci(r["ladder"], r["ladder_ci"]),
                  threefold=evals.threefold(games), book=evals.book_overlap(games))
         out.append(r)
         save_games(RUN / "games" / f"base_{d}.json", games)
@@ -205,11 +207,11 @@ def make_eval(ctx, T):
             base_raw = ctx.base_scores(T)
         u = ctx.units
         pol = {**POLICY, "self_elo": T, "oppo_elo": T}
-        games = gauntlet.play(ctx.cfg, tr.ema, pol, u.closest(T, 3), ctx.suite[:EVAL_OPENINGS], seed=3000,
+        games = gauntlet.play(ctx.cfg, tr.ema, pol, u.closest(tr.goal, 3), ctx.suite[:EVAL_OPENINGS], seed=3000,
                               name=f"{tr.name}:eval", elo=ctx.elo, label=f"policy@{T} ({tag})", cycle=True)
         r = ctx.rated(games)
         lich, ci = u.lich(r["ladder"]), [u.lich(x) for x in r["ladder_ci"]]
-        pr, _ = evals.probe(ctx.cfg, tr.ema, base_raw, T)
+        pr, _ = evals.probe(ctx.cfg, tr.ema, base_raw, T, full=True)  # the 10k set too, for the band-aware pick
         last = tr.st["log"][-1] if tr.st["log"] else {}
         ev = {"tag": tag, "update": tr.st["update"], "games_trained": tr.st["games"], "elo": lich, "elo_ci": ci,
               "ladder": r, "probe": pr, "entropy": last.get("entropy"), "kl_base": last.get("kl_base"),
@@ -224,9 +226,14 @@ def make_eval(ctx, T):
                                    "human_sce": [prev["probe"][band]["sce"], pr[band]["sce"]]}
         prev.clear()
         prev.update(ev)
-        est = tr.st.get("est")
-        say(f"{tr.name} @{tag}: Elo {lich:.0f} [{ci[0]:.0f}, {ci[1]:.0f}] vs T {T}, top-1 {pr[band]['top1']:.1f}%"
-            + (f", running estimate {est:.0f}, pull {tr.st['sign']:+.2f}" if est is not None else ""))
+        # The rating of training games drifts from what a gauntlet of the EMA measures. Half of the gap seen
+        # here goes into the correction, so one noisy eval cannot swing it.
+        raw = tr.st.get("est_raw")
+        if raw is not None:
+            tr.st["bias"] = 0.5 * tr.st["bias"] + 0.5 * (lich - raw)
+            ev.update(est_raw=raw, bias=tr.st["bias"], weight=tr.st["sign"])
+        say(f"{tr.name} @{tag}: Elo {lich:.0f} [{ci[0]:.0f}, {ci[1]:.0f}] vs goal {tr.goal:.0f}, top-1 {pr[band]['top1']:.1f}%"
+            + (f", training games read {raw:.0f}, outcome weight {tr.st['sign']:+.2f}" if raw is not None else ""))
         tr.report(f"checkpoint {tag} · Elo {lich:.0f} · top-1 {pr[band]['top1']:.1f}%",
                   stats={"elo": f"{lich:.0f}", "top1": f"{pr[band]['top1']:.1f}%"})
         return ev
@@ -237,61 +244,87 @@ def st_smoke(ctx):
     out = RUN / "smoke_run"
     shutil.rmtree(out, ignore_errors=True)
     T = 1500
-    tr = Trainer(ctx.cfg, ctx.base, out, T, 0.5, 0.5, sign=1, units=ctx.units, games=SMOKE_GAMES, name="smoke")
+    start = next(r["lichess"] for r in load("base")["curve"] if r["dial"] == T)
+    mk = lambda: Trainer(ctx.cfg, ctx.base, out, T, start + 150, start, units=ctx.units, games=SMOKE_GAMES, name="smoke")
+    tr = mk()
     st = tr.run(ctx.train_ops, lambda tr, tag: {"tag": tag})
     log = [x for x in st["log"] if "loss" in x]
     ok_loss = bool(log) and all(map(lambda x: all(isinstance(v, (int, float)) and v == v for v in x.values()), log))
-    tr2 = Trainer(ctx.cfg, ctx.base, out, T, 0.5, 0.5, sign=1, units=ctx.units, games=SMOKE_GAMES, name="smoke")
+    tr2 = mk()
     resumed = tr2.st["update"] == st["update"] and tr2.st["games"] == st["games"]
-    res = {"updates": st["update"], "games": st["games"], "finite_loss": ok_loss,
+    # The goal is 150 Elo above the base model, so the outcome weight has to have grown toward winning.
+    steered = st.get("est") is not None and st["nu"] > 0
+    res = {"updates": st["update"], "games": st["games"], "finite_loss": ok_loss, "steered": steered,
            "kl_logged": all("kl_base" in x for x in log), "resume_ok": resumed, "log": log}
-    if not (ok_loss and res["kl_logged"] and resumed and st["update"] >= 2):
-        raise RuntimeError(f"smoke run failed: {res}")
+    if not (ok_loss and res["kl_logged"] and resumed and steered and st["update"] >= 2):
+        raise RuntimeError(f"smoke run failed: { {k: v for k, v in res.items() if k != 'log'} }")
     shutil.rmtree(out, ignore_errors=True)
-    say(f"smoke run passed: {st['update']} updates, finite loss, KL logged, resume ok")
+    say(f"smoke run passed: {st['update']} updates, finite loss, KL logged, resume ok, outcome weight {st['sign']:+.2f}")
     return res
 
 
-def arm_name(T, wo, wf):
-    return f"T{T}_out{wo}_fid{wf}"
+def arm_name(T, frac):
+    return f"T{T}_goal{round(100 * frac)}"
 
 
-def finish_arm(ctx, T, tr: Trainer, base_curve) -> dict:
-    # Winner's-curse guard: the three evaluated checkpoints nearest T get a fresh 800-game gauntlet and the 10k
-    # fidelity set, and the final pick is made on those numbers only.
+def held(log: list[dict], goal: float) -> dict:
+    # How well the last third of training stayed on the goal, from the running rating at each update.
+    v = [x["est"] for x in log if "est" in x]
+    v = v[-max(1, len(v) // 3):]
+    if not v:
+        return {}
+    m = sum(v) / len(v)
+    return {"updates": len(v), "mean": m, "sd": (sum((x - m) ** 2 for x in v) / len(v)) ** 0.5,
+            "in_band": sum(abs(x - goal) <= BAND for x in v) / len(v)}
+
+
+def finish_arm(ctx, T, tr: Trainer, frac: float, start: float) -> dict:
+    # The checkpoint reported is the last one. The first two runs picked the evaluated checkpoint nearest the
+    # target, which flatters a policy that swings through it. It gets a fresh 800-game gauntlet and the 10k
+    # fidelity set, then the dial test and the mistake analysis.
     u = ctx.units
-    evs = [e for e in tr.st["evals"] if "elo" in e]
-    top = sorted(evs, key=lambda e: abs(e["elo"] - T))[:3]
     pol = {**POLICY, "self_elo": T, "oppo_elo": T}
-    conf = []
     confirm_games = 4 * len(ctx.suite[:EVAL_OPENINGS])
     sensitivity_games = 6 * len(ctx.suite[:SENS_OPENINGS])
-    final_total = len(top) * confirm_games + sensitivity_games
-    final_steps = len(top) + 1
-    tr.report("preparing final checks", force=True,
-              stats={"final_active": True, "final_before": 0, "final_total": final_total,
-                     "final_step": 0, "final_steps": final_steps})
+    final_total, final_steps = 2 * confirm_games + sensitivity_games, 2
+    stats = lambda step, before, active=True: {"final_active": active, "final_before": before, "final_total": final_total,
+                                               "final_step": step, "final_steps": final_steps}
+    tr.report("final check 1/2 · fresh rated games for the last checkpoint", force=True, stats=stats(1, 0))
     model = maia.load(ctx.cfg.device)[1].eval()
-    for i, e in enumerate(top, 1):
-        tr.report(f"final check {i}/{final_steps} · fresh rated games for checkpoint {e['tag']}", force=True,
-                  stats={"final_active": True, "final_before": (i - 1) * confirm_games, "final_total": final_total,
-                         "final_step": i, "final_steps": final_steps, "checkpoint": e["tag"]})
-        model.load_state_dict(torch.load(tr.out / f"ema_{e['tag']}.pt", map_location=ctx.cfg.device))
-        games = gauntlet.play(ctx.cfg, model, pol, u.closest(T, 3), ctx.suite[:EVAL_OPENINGS] * 2, seed=4000,
-                              name=f"{tr.name}:confirm", elo=ctx.elo, label=f"policy@{T} confirm {e['tag']}", cycle=True)
-        r = ctx.rated(games)
-        pr, _ = evals.probe(ctx.cfg, model, ctx.base_scores(T), T, full=True)
-        conf.append({"tag": e["tag"], "elo": u.lich(r["ladder"]), "elo_ci": [u.lich(x) for x in r["ladder_ci"]],
-                     "ladder": r, "fidelity": pr.get("fid_T"), "probe": pr})
-        save_games(tr.out / f"confirm_{e['tag']}.games.json", games)
-    final = min(conf, key=lambda c: abs(c["elo"] - T))
-    model.load_state_dict(torch.load(tr.out / f"ema_{final['tag']}.pt", map_location=ctx.cfg.device))
+    model.load_state_dict(torch.load(tr.out / "ema_final.pt", map_location=ctx.cfg.device))
+    games = gauntlet.play(ctx.cfg, model, pol, u.closest(tr.goal, 3), ctx.suite[:EVAL_OPENINGS] * 2, seed=4000,
+                          name=f"{tr.name}:confirm", elo=ctx.elo, label=f"policy@{T} final", cycle=True)
+    r = ctx.rated(games)
+    pr, _ = evals.probe(ctx.cfg, model, ctx.base_scores(T), T, full=True)
+    final = {"tag": "final", "elo": u.lich(r["ladder"]), "elo_ci": [u.lich(x) for x in r["ladder_ci"]],
+             "elo_ci_units": u.ci(r["ladder"], r["ladder_ci"]), "ladder": r, "fidelity": pr.get("fid_T"), "probe": pr}
+    save_games(tr.out / "confirm_final.games.json", games)
     torch.save(model.state_dict(), tr.out / "final.pt")
+    # A second, selected checkpoint: of the evals that measured inside the band, the one that matches humans
+    # best on the 10k set. In the second run the outcome-only arm kept losing move-match after it had reached
+    # the band (57.3, 55.2, 54.0% at 1900), so an earlier in-band checkpoint was the better model. Its Elo comes
+    # from a fresh gauntlet, since "inside the band" was itself read off a noisy eval.
+    inband = [e for e in tr.st["evals"] if "elo" in e and abs(e["elo"] - tr.goal) <= BAND and e["probe"].get("fid_T")]
+    pick = max(inband, key=lambda e: e["probe"]["fid_T"]["top1"], default=None)
+    band_pick = None
+    if pick is not None and pick["tag"] == "final":
+        band_pick = {**final, "eval_elo": pick["elo"]}
+    elif pick is not None:
+        m2 = maia.load(ctx.cfg.device)[1].eval()
+        m2.load_state_dict(torch.load(tr.out / f"ema_{pick['tag']}.pt", map_location=ctx.cfg.device))
+        g2 = gauntlet.play(ctx.cfg, m2, pol, u.closest(tr.goal, 3), ctx.suite[:EVAL_OPENINGS] * 2, seed=4001,
+                           name=f"{tr.name}:confirm", elo=ctx.elo, label=f"policy@{T} checkpoint {pick['tag']}", cycle=True)
+        r2 = ctx.rated(g2)
+        p2, _ = evals.probe(ctx.cfg, m2, ctx.base_scores(T), T, full=True)
+        band_pick = {"tag": pick["tag"], "eval_elo": pick["elo"], "elo": u.lich(r2["ladder"]),
+                     "elo_ci": [u.lich(x) for x in r2["ladder_ci"]], "elo_ci_units": u.ci(r2["ladder"], r2["ladder_ci"]),
+                     "ladder": r2, "fidelity": p2.get("fid_T")}
+        torch.save(m2.state_dict(), tr.out / "band_pick.pt")
+        del m2
     # Conditioning sensitivity: the same openings and seeds at three dial settings.
-    tr.report(f"final check {final_steps}/{final_steps} · testing rating control at {T - 200}, {T}, {T + 200}",
-              force=True, stats={"final_active": True, "final_before": len(top) * confirm_games,
-                                 "final_total": final_total, "final_step": final_steps, "final_steps": final_steps})
-    rng, near = random.Random(5000), u.closest(T, 3)
+    tr.report(f"final check 2/2 · testing rating control at {T - 200}, {T}, {T + 200}", force=True,
+              stats=stats(2, confirm_games))
+    rng, near = random.Random(5000), u.closest(tr.goal, 3)
     todo = [{"opp": near[i % 3], "opening": op, "white": w, "seed": rng.getrandbits(31), "self_elo": d, "oppo_elo": d,
              "dial": d, "label": f"final@{d}"}
             for d in (T - 200, T, T + 200) for i, op in enumerate(ctx.suite[:SENS_OPENINGS]) for w in (True, False)]
@@ -302,22 +335,22 @@ def finish_arm(ctx, T, tr: Trainer, base_curve) -> dict:
     for d in (T - 200, T, T + 200):
         r = ctx.rated([g for g in played if g["dial"] == d])
         sens[d] = {"elo": u.lich(r["ladder"]), "elo_ci": [u.lich(x) for x in r["ladder_ci"]], **r}
-    fgames = json.loads((tr.out / f"confirm_{final['tag']}.games.json").read_text())
-    hl = evals.humanlike(evals.moves_of(fgames, 8000))
-    tr.report("final checks complete", force=True,
-              stats={"final_active": False, "final_before": final_total, "final_total": final_total,
-                     "final_step": final_steps, "final_steps": final_steps})
+    hl = evals.humanlike(evals.moves_of(games, HUMANLIKE_MOVES))
+    tr.report("final checks complete", force=True, stats=stats(2, final_total, False))
     del model
     torch.cuda.empty_cache()
-    return {"T": T, "w_out": tr.w_out, "w_fid": tr.w_fid, "evals": tr.st["evals"], "confirm": conf,
-            "final": final, "sensitivity": sens, "humanlike": hl, "recoveries": tr.st["recoveries"],
-            "train_log": tr.st["log"], "loss": {"kl_coef": KL_COEF, "pull": PULL, "ctrl_games": CTRL_GAMES}}
+    log = tr.st["log"]
+    return {"T": T, "goal": tr.goal, "start": start, "frac": frac, "evals": tr.st["evals"], "final": final,
+            "band_pick": band_pick,
+            "sensitivity": sens, "humanlike": hl, "recoveries": tr.st["recoveries"], "held": held(log, tr.goal),
+            "weight": tr.st["sign"], "bias": tr.st["bias"], "train_log": log,
+            "loss": {"kp": KP, "eta": ETA, "pull": PULL, "band": BAND, "ctrl_games": CTRL_GAMES}}
 
 
 class SweepProgress:
     def __init__(self, targets):
         self.targets = targets
-        self.total = len(targets) * len(ARMS) * ARM_GAMES
+        self.total = len(targets) * len(GOALS) * ARM_GAMES
         self.parts, self.trainers = {}, {}
         self.stopping = threading.Event()
         self.thread = threading.Thread(target=self.poll, daemon=True)
@@ -335,7 +368,7 @@ class SweepProgress:
     def update(self):
         done = sum(self.parts.values()) + sum(min(tr.st["games"], ARM_GAMES) for tr in self.trainers.values())
         active = sum(tr.st["games"] < ARM_GAMES for tr in self.trainers.values())
-        total_arms = len(self.targets) * len(ARMS)
+        total_arms = len(self.targets) * len(GOALS)
         progress.tick("sweep", done, self.total, "games",
                       note=f"{len(self.parts)}/{total_arms} arms complete · {active} active")
 
@@ -356,42 +389,44 @@ def st_sweep(ctx):
     tracker = SweepProgress(targets)
     try:
         for T in targets:
-            bc = next((r for r in base["curve"] if r["dial"] == T), None)
-            sign = 1.0 if bc is None else pull(T, bc["lichess"])
+            start = next(r["lichess"] for r in base["curve"] if r["dial"] == T)
+            goal = lambda f: start + f * (T - start)
             pending = []
-            for wo, wf in ARMS:
-                name = arm_name(T, wo, wf)
+            for f in GOALS:
+                name = arm_name(T, f)
                 if done(f"arm_{name}"):
                     results[name] = load(f"arm_{name}")
                     tracker.complete(name)
                 else:
-                    pending.append((wo, wf))
+                    pending.append(f)
 
-            def run(arm):
-                wo, wf = arm
-                name = arm_name(T, wo, wf)
-                say(f"training {name}")
-                tr = Trainer(ctx.cfg, ctx.base, ROOT / "runs" / "arms" / name, T, wo, wf, sign=sign, units=ctx.units,
+            def run(f):
+                name = arm_name(T, f)
+                say(f"training {name}: dial {T}, from {start:.0f} to {goal(f):.0f}")
+                tr = Trainer(ctx.cfg, ctx.base, ROOT / "runs" / "arms" / name, T, goal(f), start, units=ctx.units,
                              games=ARM_GAMES, seed=zlib.crc32(name.encode()) % 10_000, name=name)
                 tracker.add(tr)
                 tr.run(ctx.train_ops, make_eval(ctx, T))
-                return name, tr
+                return name, f, tr
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=SWEEP_WORKERS) as pool:
                 trained = list(pool.map(run, pending))
-            for name, tr in trained:
-                res = finish_arm(ctx, T, tr, base)
+            for name, f, tr in trained:
+                res = finish_arm(ctx, T, tr, f, start)
                 save(f"arm_{name}", res)
+                for ck in tr.out.glob("*.pt"):  # about 2.5 GB an arm otherwise, and only final.pt is used again
+                    if ck.name not in ("final.pt", "band_pick.pt"):
+                        ck.unlink()
                 tracker.complete(name)
                 results[name] = res
-                f = res["final"]
-                say(f"{name} final: Elo {f['elo']:.0f} [{f['elo_ci'][0]:.0f}, {f['elo_ci'][1]:.0f}], "
-                    f"fidelity top-1 {f['fidelity']['top1']:.1f}%")
+                fi, h = res["final"], res["held"]
+                say(f"{name} final: Elo {fi['elo']:.0f} [{fi['elo_ci'][0]:.0f}, {fi['elo_ci'][1]:.0f}] vs goal {tr.goal:.0f}, "
+                    f"top-1 {fi['fidelity']['top1']:.1f}%, in band {h.get('in_band', 0):.0%} of the last third")
         # Human-likeness of the untouched model and of real humans at each target, for the comparison.
         ref, checks = {}, []
         for T in targets:
             bg = json.loads((RUN / "games" / f"base_{T}.json").read_text())
-            checks.extend([(T, "base model", evals.moves_of(bg, 8000)), (T, "human games", evals.human_moves(T))])
+            checks.extend([(T, "base model", evals.moves_of(bg, HUMANLIKE_MOVES)), (T, "human games", evals.human_moves(T, HUMANLIKE_MOVES))])
         total = sum(len(moves) for _, _, moves in checks)
         progress.tick("comparison", 0, total, "positions", force=True, note="preparing final comparison")
         completed = 0
@@ -431,6 +466,11 @@ def pgn(g: dict, white: str, black: str) -> str:
 
 def main():
     t0 = time.time()
+    RUN.mkdir(parents=True, exist_ok=True)
+    man = ROOT / "MANIFEST.json"  # written by scripts/deploy.sh
+    if not (RUN / "manifest.json").exists():
+        (RUN / "manifest.json").write_text(man.read_text() if man.exists() else json.dumps({"commit": None}))
+    say(f"code: {json.loads((RUN / 'manifest.json').read_text()).get('commit') or 'unknown commit, not deployed with scripts/deploy.sh'}")
     ctx = Ctx()
     try:
         for i, name in enumerate(STAGES):

@@ -39,15 +39,15 @@ def fit(pts, n: int = 4000, seed: int = 0) -> dict:
         B = sorted(d[1] for d in draws)
         out[name] = {"a": a, "b": b, "a_ci": [A[int(.025 * n)], A[int(.975 * n)]],
                      "b_ci": [B[int(.025 * n)], B[int(.975 * n)]],
-                     "resid": [p[2] - (a + b * p[0]) for p in pts]}
+                     "resid": [p[2] - (a + b * p[0]) for p in pts], "draws": draws[::max(1, n // 400)]}
     lo, hi = out["affine"]["b_ci"]
     out["use"] = "affine" if not lo <= 1.0 <= hi else "offset"
     return out
 
 
 class Units:
-    def __init__(self, a: float, b: float, rungs: dict[str, float], refused=()):
-        self.a, self.b = a, b
+    def __init__(self, a: float, b: float, rungs: dict[str, float], refused=(), draws=()):
+        self.a, self.b, self.draws = a, b, list(draws)
         self.rungs = sorted(((e, n) for n, e in rungs.items() if n not in refused))
 
     @classmethod
@@ -55,10 +55,19 @@ class Units:
         f = json.loads(path.read_text())
         c = json.loads(calib.read_text())
         m = f["fit"][f["fit"]["use"]]
-        return cls(m["a"], m["b"], c["elo"], c["refused"])
+        return cls(m["a"], m["b"], c["elo"], c["refused"], m.get("draws", ()))
 
     def lich(self, x: float) -> float:
         return self.a + self.b * x
+
+    def ci(self, x: float, x_ci) -> list[float]:
+        # 95% interval of the Lichess Elo at ladder Elo x: the gauntlet's own interval and the spread of the fit
+        # at x, added in quadrature. The plain interval, lich() of each end, only compares arms inside one run.
+        v = [a + b * x for a, b in self.draws]
+        m = sum(v) / len(v) if v else 0.0
+        sd = (sum((y - m) ** 2 for y in v) / len(v)) ** 0.5 if v else 0.0
+        half = ((self.b * (x_ci[1] - x_ci[0]) / 2) ** 2 + (1.96 * sd) ** 2) ** 0.5
+        return [self.lich(x) - half, self.lich(x) + half]
 
     def ladder(self, lich: float) -> float:
         return (lich - self.a) / self.b

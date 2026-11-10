@@ -4,8 +4,8 @@ GRPO post-training of [Maia-3-79M](https://huggingface.co/UofTCSSLab/Maia3-79M) 
 blitz rating it is asked for, while still choosing the moves people at that rating choose. This is independent
 work and is not affiliated with or endorsed by CSSLab.
 
-Status: one full run is finished and written up in `results/run1/summary.md`. A second run with the changes it
-called for (below) is in progress, so nothing here is a final result yet.
+Status: two full runs are finished and written up in `results/run1/summary.md` and `results/run2/summary.md`. A
+third run with the changes they called for (below) is in progress. Nothing here is a final result yet.
 
 ## Why
 
@@ -26,19 +26,21 @@ against real games.
   each dial's ladder rating is fitted against that bot's Lichess rating. Lichess is only ever read, with no
   account and no games played.
 - `levelrl/train.py` is the trainer. Groups of 8 games share an opening and an opponent. The loss is
-  `w_out * PPO(pull * outcome) + w_fid * 4 * KL(policy || base model at the target)`. `pull` runs from +1 (150 or
-  more Elo below the target, winning is rewarded) to -1 (150 or more above, losing is rewarded) and is zero on
-  the target. It follows a rating of the last 256 training games, refreshed every update.
+  `w * PPO(outcome) + KL(policy || base model at the dial)`. `w` is a signed weight set by a PI controller on the
+  gap between the arm's goal Elo and a rating of its last 256 training games, so it keeps growing until the goal
+  is reached and reverses on overshoot. Each eval corrects that rating against a gauntlet.
 - `levelrl/evals.py` holds what never feeds a reward: move-match on held-out human positions, blunder types and
   per-phase error rates judged by Stockfish, opening-book overlap and repetition rate.
 - `levelrl/pipeline.py` runs all of it: snapshot, anchors, Maia-1 cross-check, base curve, smoke run, a sweep of
-  five reward weightings per target, and the report.
+  four goals per dial (25, 50, 75 and 100% of the way from where the base model plays to the dial), and the report.
 
 ## Running it
 
 ```
 pip install -r requirements.txt
 (cd native && cargo build --release)      # optional Rust board/token/legal-mask acceleration
+scripts/deploy.sh                        # from the dev machine: refuses a dirty tree, records the commit
+scripts/new_run.sh                       # on the box: archives the last run as runs/runN and results/runN
 scripts/run_pipeline.sh                  # tmux session "pipeline", resumes where it stopped
 python -m pytest -q
 ```
@@ -65,6 +67,23 @@ set the pull from a gauntlet every 25 updates. Its numbers are in `results/run1/
 - Rung strength depended on CPU load. Rungs now search a fixed 30,000 nodes, the median they reached in 50 ms
   with every worker busy.
 
+## What the second run taught
+
+Run 2 used the node-budget rungs, the KL term at a fixed strength of 4, a pull set from the training games, and
+targets 1100 (base model plays 1258) and 1900 (plays 1775). Its numbers are in `results/run2/`.
+
+- Outcome alone reaches both targets: 1086 (1050 to 1118) and 1899 (1864 to 1933). It costs move-match on
+  held-out humans, 0.8 to 2.1 points at 1100 and 3.5 to 5.0 at 1900, and at 1100 it flattened the dial (moving
+  it 400 points moved play 69 Elo).
+- With the KL term, move-match did not change measurably and the hack catalog was empty, but the arms stopped
+  80 to 145 Elo short with KL at 0.004 to 0.013. Without it, KL was 0.283 and 0.453. No arm sat between.
+- So a fixed weight is the wrong knob. The weight is now found by a controller, and the sweep is over how far
+  to move.
+- The outcome-only arm kept losing move-match after it had reached the band (57.3, 55.2, 54.0% at 1900). The
+  report now gives the last checkpoint with no selection, and beside it the best-matching checkpoint among
+  those that measured inside the band.
+- The rating of training games ran 20 to 40 Elo under the eval gauntlets.
+
 ## Sharp edges
 
 - The ladder is compressed (in run 1, Stockfish's nominal 1320 to 2500 spanned about 730 ladder points), so the
@@ -74,8 +93,8 @@ set the pull from a gauntlet every 25 updates. Its numbers are in `results/run1/
 - The bots above dial 2200 have few rated games and are treated as plus or minus 150.
 - Fidelity is measured against the base model, not against people. The held-out human move-match and the hack
   catalog are the check on that.
-- `KL_COEF = 4` and `PULL = 150` in `levelrl/train.py` are first guesses that no run has tuned.
-- The human-likeness table has no intervals yet.
+- The controller gains in `levelrl/train.py` (`KP = 1`, `ETA = 0.15`, `PULL = 150`) are first guesses that no run
+  has tuned.
 
 ## Credits and licence
 

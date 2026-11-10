@@ -14,19 +14,23 @@ import torch
 from levelrl import arena, evals, gauntlet, maia, progress
 
 # GRPO on Maia-3-79M. Groups of G games start from one booked opening against one rung, half with each colour.
-# The loss is w_out * (PPO on the outcome, pulled toward the band) + w_fid * KL_COEF * KL(policy || base at T).
+# The loss is w * PPO(outcome) + KL(policy || base model at the dial T), and the job is to reach a goal Elo with
+# as little KL as that takes.
 #
-# Outcome: the advantage is s * outcome, standardised inside the group, where s in [-1, 1] is the pull: positive
-# while the policy plays below T, negative above it, zero on it. The spec's plain +outcome only ever pushes up,
-# and the dial already plays above its setting at the low end. s comes from a rating of the last CTRL_GAMES
-# training games, refreshed every update. The first run set it from a gauntlet every 25 updates and overshot the
-# band by 100 to 250 Elo each way between evals (1720, 1470, 1602, 1480 for one arm).
+# w is a signed weight on the outcome: positive rewards winning, negative rewards losing. It is a PI controller on
+# the gap between the goal and a rating of the last CTRL_GAMES training games: w = nu + KP * e, with e the gap in
+# units of PULL Elo clipped to [-1, 1] and nu its running sum times ETA. The sum is what the second run lacked.
+# There the weight was fixed, the KL pushed back, and the mixed arms settled 80 to 145 Elo short of the target
+# with the pull stuck at +0.6 to +0.9. With the sum, w keeps growing until the goal is reached, so the weight
+# is found and not swept: it is the multiplier of "Elo equals the goal" in a problem that minimises the KL.
 #
-# Fidelity: the first run rewarded the base model's log-prob of the sampled move (the judge). That is only the
-# cross-entropy half of a KL, so the policy raised it by sharpening: entropy fell (1.28 to 0.90 on the judge-only
-# arm), strength rose with it, and move-match on real humans dropped 0.4 to 2.4 points on every arm. The whole
-# KL has its optimum at the base model itself, and it is exact per position, so it is a loss term here and not a
-# sampled reward. The judge's score is still logged.
+# The rating of training games ran 20 to 40 Elo below the eval gauntlets in the second run (raw policy, not the
+# EMA, different openings, training-only resignations), so each eval sets a correction for it.
+#
+# History of the fidelity term: the first run rewarded the base model's log-prob of the sampled move. That is
+# only the cross-entropy half of a KL, so the policy raised it by sharpening and move-match on real humans
+# dropped 0.4 to 2.4 points on every arm. The whole KL has its optimum at the base model and is exact per
+# position, so it is a loss term. In the second run it kept move-match intact on every arm that had it.
 # Outcome credit decays by GAMMA a ply back from the end and has the WDL head's prediction subtracted with a
 # coefficient fitted on the previous batch, kept in [0, 1].
 # Profiling: the 4090 runs the model at ~4k positions/s and the step is bound by Stockfish and Python, so
@@ -43,11 +47,12 @@ MB = 64
 EMA = 0.95
 GAMMA = 0.99
 CKPT_EVERY = 25
-EVAL_AT = (25, 50, 75)
+EVAL_AT = (25, 50, 75, 100, 125)
 EVAL_OPENINGS = 34
 RESIGN_P, RESIGN_N = 0.97, 6
 PULL = 150.0  # Elo from the band at which the outcome term is at full strength
-KL_COEF = 4.0
+KP, ETA, NU_MAX = 1.0, 0.15, 50.0  # controller gains, and a cap that stops the sum winding up
+BAND = 50.0
 CTRL_GAMES, CTRL_MIN = 256, 64  # training games behind the running rating, and how many before it is trusted
 ENTROPY_FLOOR = 0.3  # collapse if entropy falls below this fraction of its first value
 
@@ -65,9 +70,11 @@ def pull(T: float, elo: float) -> float:
 
 
 class Trainer:
-    def __init__(self, cfg, base, out: Path, T: int, w_out: float, w_fid: float, sign: float, units, games: int,
+    def __init__(self, cfg, base, out: Path, T: int, goal: float, start: float, units, games: int,
                  seed: int = 0, name: str = "train"):
-        self.cfg, self.base, self.out, self.T, self.w_out, self.w_fid = cfg, base, out, T, w_out, w_fid
+        # T is the dial the policy is asked for and the base model is compared at. goal is the Lichess Elo to
+        # reach, start is where the base model plays at T.
+        self.cfg, self.base, self.out, self.T, self.goal = cfg, base, out, T, goal
         self.units, self.games, self.seed, self.name = units, games, seed, name
         self.dev = cfg.device
         self.policy = copy.deepcopy(base).float()
@@ -77,7 +84,7 @@ class Trainer:
         for p in self.ema.parameters():
             p.requires_grad_(False)
         self.opt = torch.optim.AdamW(self.policy.parameters(), lr=LR, fused=str(self.dev).startswith("cuda"))
-        self.st = {"update": 0, "games": 0, "sign": sign, "c": 0.0, "lr": LR, "clip_high": CLIP, "recoveries": 0,
+        self.st = {"update": 0, "games": 0, "sign": KP * pull(goal, start), "nu": 0.0, "bias": 0.0, "c": 0.0, "lr": LR, "clip_high": CLIP, "recoveries": 0,
                    "entropy0": None, "log": [], "evals": []}
         self.rng = random.Random(seed)
         self.recent = deque(maxlen=CTRL_GAMES)
@@ -110,9 +117,7 @@ class Trainer:
 
     # --- rollouts ---
     def opponent(self) -> str:
-        # Curriculum: the opponent's Lichess strength ramps from T-400 to T over the first third of training.
-        f = min(1.0, self.st["games"] / max(1, self.games / 3))
-        return self.units.rung_near(self.T - 400 * (1 - f), self.rng)
+        return self.units.rung_near(self.goal, self.rng)
 
     def feed_fn(self, openings):
         q = []
@@ -168,7 +173,7 @@ class Trainer:
             for r in g["rec"]:
                 per.append((r, d * (o * GAMMA ** (g["plies"] - r[6]) - c * r[4])))
         zo = _z([p[1] for p in per])
-        return [(p[0], self.w_out * abs(s) * x) for p, x in zip(per, zo)], rs
+        return [(p[0], abs(s) * x) for p, x in zip(per, zo)], rs
 
     def fit_c(self, batch: list[dict]):
         ys, vs = [], []
@@ -212,7 +217,7 @@ class Trainer:
                     bl = torch.log_softmax(blog, -1).clamp_min(-1e4)
                 # Illegal moves are -inf on both sides. Clamped, they cancel to zero and carry no gradient.
                 kl = (logp_all.exp() * (logp_all.clamp_min(-1e4) - bl)).sum(-1).mean()
-                loss = -torch.min(ratio * adv, clipped * adv).mean() + self.w_fid * KL_COEF * kl
+                loss = -torch.min(ratio * adv, clipped * adv).mean() + kl
                 self.opt.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)
@@ -259,10 +264,14 @@ class Trainer:
         progress.event(self.name, f"{why}: back to update {self.st['update']}, lr {self.st['lr']:.1e}")
 
     def steer(self):
-        # The pull follows a rating of the most recent training games, so it reacts within a few updates.
-        if len(self.recent) >= CTRL_MIN:
-            est = self.units.lich(gauntlet.rate(list(self.recent), self.elo))
-            self.st["est"], self.st["sign"] = est, pull(self.T, est)
+        if len(self.recent) < CTRL_MIN:
+            return
+        st = self.st
+        st["est_raw"] = self.units.lich(gauntlet.rate(list(self.recent), self.elo))
+        st["est"] = st["est_raw"] + st["bias"]
+        e = pull(self.goal, st["est"])
+        st["nu"] = max(-NU_MAX, min(NU_MAX, st["nu"] + ETA * e))
+        st["sign"] = st["nu"] + KP * e
 
     def evaluate(self, tag: str, on_eval):
         if any(e.get("tag") == tag for e in self.st["evals"]):
@@ -276,7 +285,7 @@ class Trainer:
         if stats:
             latest.update({k: v for k, v in stats.items() if k in ("elo", "top1")})
         self.st["latest_eval"] = latest
-        s = {"T": self.T, "w_out/w_fid": f"{self.w_out}/{self.w_fid}", "toward band": f"{self.st['sign']:+.2f}",
+        s = {"dial": self.T, "goal": f"{self.goal:.0f}", "outcome weight": f"{self.st['sign']:+.2f}",
              **latest}
         if stats:
             s.update(stats)
@@ -298,10 +307,7 @@ class Trainer:
                 if len(groups[g["group"]]) == G:
                     grp = groups.pop(g["group"])
                     self.recent.extend({"opp": x["opp"], "score": x["score"]} for x in grp)
-                    # Dynamic sampling: with no fidelity term, a group where every game ended the same way has
-                    # nothing to learn from. With one, its positions still feed the KL.
-                    if self.w_fid > 0 or len({x["score"] for x in grp}) > 1:
-                        ready.append(grp)
+                    ready.append(grp)  # every group feeds the KL, so none is dropped
                     self.st["games"] += G
             self.report(f"update {self.st['update']} · {len(ready) * G} games ready for optimizer update ({MIN_BATCH} required)")
             if len(ready) * G < MIN_BATCH:
@@ -315,11 +321,13 @@ class Trainer:
             self.st["update"] += 1
             u = self.st["update"]
             s.update(update=u, games=self.st["games"], c=self.st["c"], sign=self.st["sign"], t=time.time() - t0)
+            s["nu"] = self.st["nu"]
             if self.st.get("est") is not None:  # absent until the running rating has enough games
                 s["est"] = self.st["est"]
             self.st["log"].append(s)
             self.report(f"update {u} · reward {s['reward']:+.3f} · KL {s['kl_base']:.4f} · entropy {s['entropy']:.2f}",
-                        stats={"judge": f"{s['judge']:.2f}", "cv c": f"{self.st['c']:.2f}"})
+                        stats={"rating": f"{self.st['est']:.0f}" if self.st.get("est") is not None else "warming up",
+                               "KL": f"{s['kl_base']:.3f}"})
             if u % CKPT_EVERY == 0:
                 self.save()
             if u in EVAL_AT:

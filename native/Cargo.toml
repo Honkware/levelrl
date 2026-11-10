@@ -1,0 +1,11 @@
+[package]
+name = "levelrl-native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "levelrl_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cozy-chess = { version = "0.3.4", features = ["std"] }

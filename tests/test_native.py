@@ -1,0 +1,21 @@
+import chess
+import pytest
+import torch
+
+from levelrl import maia, native
+from tests.test_maia import positions, promotions
+
+pytestmark = pytest.mark.skipif(not native.available(), reason="native library is not built")
+
+
+def test_native_features_match_python_and_maia_on_1204_positions():
+    special = [
+        chess.Board("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"),
+        chess.Board("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1"),
+        chess.Board("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1"),
+        chess.Board("4k3/8/8/8/3Pp3/8/8/4K3 b - d3 0 1"),
+    ]
+    for board in positions(7) + promotions(9) + special:
+        tokens, mask = native.features(board)
+        assert torch.equal(tokens, maia.encode_board(board)), board.fen()
+        assert torch.equal(mask, maia.legal(board)), board.fen()

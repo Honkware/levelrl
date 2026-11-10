@@ -5,6 +5,7 @@ import random
 
 import chess
 import chess.engine
+import numpy as np
 import torch
 
 from levelrl import arena, data, maia
@@ -17,6 +18,7 @@ BLUNDER, MISTAKE = 200, 100
 NODES = 100_000
 VAL = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0}
 _rows: dict = {}
+_features: dict = {}
 
 
 def rows(name: str) -> list[dict]:
@@ -36,22 +38,34 @@ def probe_sets(T: int | None = None) -> dict[str, list[dict]]:
     return s
 
 
+def features(cfg, rs: list[dict], bsz: int):
+    key = (str(cfg.device), cfg.history, bsz, tuple(id(r) for r in rs))
+    if key not in _features:
+        batches = []
+        for i in range(0, len(rs), bsz):
+            ch = rs[i:i + bsz]
+            encoded = [maia.replay_features(cfg, r["moves"]) for r in ch]
+            boards = [b for b, _, _ in encoded]
+            x = torch.stack([v for _, v, _ in encoded]).to(cfg.device)
+            m = torch.stack([mask for _, _, mask in encoded]).to(cfg.device)
+            idx = torch.tensor([maia.MOVE_IDX[r["move"] if b.turn else maia.mirror_move(r["move"])]
+                                for b, r in zip(boards, ch)], device=cfg.device)
+            batches.append((x, m, idx))
+        _features[key] = (rs, batches)
+    return _features[key][1]
+
+
 @torch.no_grad()
 def score(cfg, model, rs: list[dict], self_elo: int | None = None, bsz: int = 1024) -> dict:
     # Per position: did argmax match the human move, and the human move's negative log-likelihood. Ratings are
-    # the row's own unless self_elo pins the dial.
+    # the row's own unless self_elo pins the dial. Features are fixed, so retain them on the device across arms.
     hit, nll = [], []
-    for i in range(0, len(rs), bsz):
-        ch = rs[i:i + bsz]
-        boards = [data.board(r) for r in ch]
-        x = torch.stack([maia.tokens(cfg, b, True) for b in boards])
-        m = torch.stack([maia.legal(b) for b in boards])
+    for i, (x, m, idx) in enumerate(features(cfg, rs, bsz)):
+        ch = rs[i * bsz:(i + 1) * bsz]
         se = [self_elo or r["elo"] for r in ch]
         oe = [self_elo or r["oppo_elo"] for r in ch]
         logits, _ = maia.run(model, x, m, se, oe, cfg.device)
         lp = torch.log_softmax(logits, -1)
-        idx = torch.tensor([maia.MOVE_IDX[r["move"] if b.turn else maia.mirror_move(r["move"])]
-                            for b, r in zip(boards, ch)], device=lp.device)
         hit += (logits.argmax(-1) == idx).int().tolist()
         nll += (-lp.gather(1, idx[:, None])[:, 0]).tolist()
     return {"hit": hit, "nll": nll}
@@ -64,11 +78,15 @@ def summary(s: dict) -> dict:
 
 def paired_ci(a: list[float], b: list[float], n: int = 2000, seed: int = 0) -> list[float]:
     # 95% bootstrap interval of mean(a) - mean(b) over the same positions.
-    rng = random.Random(seed)
-    d = [x - y for x, y in zip(a, b)]
+    rng = np.random.default_rng(seed)
+    d = np.asarray([x - y for x, y in zip(a, b)])
     k = len(d)
-    v = sorted(sum(d[rng.randrange(k)] for _ in range(k)) / k for _ in range(n))
-    return [v[int(.025 * n)], v[int(.975 * n)]]
+    chunks = []
+    for i in range(0, n, 100):
+        idx = rng.integers(0, k, size=(min(100, n - i), k))
+        chunks.append(d[idx].mean(axis=1))
+    v = np.sort(np.concatenate(chunks))
+    return [float(v[int(.025 * n)]), float(v[int(.975 * n)])]
 
 
 def probe(cfg, model, base_scores: dict | None, T: int | None, full: bool = False) -> tuple[dict, dict]:

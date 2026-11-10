@@ -26,6 +26,9 @@ def tick(name: str, done: int, total: int | None, unit: str = "", force: bool = 
          stats: dict | None = None) -> None:
     now = time.time()
     j = _jobs.setdefault(name, {"name": name, "start": now, "events": []})
+    if done < j.get("done", 0) or (j.get("total") is not None and total != j["total"]):
+        j.update(start=now, events=[])
+        j.pop("stats", None)
     j.update(done=done, total=total, unit=unit, t=now)
     if note is not None:
         j["note"] = note

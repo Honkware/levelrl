@@ -156,7 +156,7 @@ def test_final_checks_report_one_accumulating_total(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline.gauntlet, "run", lambda *args, **kwargs: [])
     monkeypatch.setattr(pipeline.evals, "probe", lambda *args, **kwargs: ({"fid_T": {"top1": 50.0}}, {}))
     monkeypatch.setattr(pipeline.evals, "moves_of", lambda games, limit: [])
-    monkeypatch.setattr(pipeline.evals, "humanlike", lambda moves: {})
+    monkeypatch.setattr(pipeline.evals, "humanlike", lambda moves, **kw: {})
 
     result = pipeline.finish_arm(Ctx(), 1500, Trainer(), 1.0, 1600.0)
     final = [stats for _, stats in reports if stats.get("final_total")]

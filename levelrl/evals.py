@@ -8,7 +8,7 @@ import chess.engine
 import numpy as np
 import torch
 
-from levelrl import arena, data, maia
+from levelrl import arena, data, maia, progress
 
 # Measurements that never feed a reward: move-match probes on held-out human positions, the human-likeness
 # analysis (blunder types and per-phase error rates judged by Stockfish), and opening-book overlap.
@@ -46,6 +46,8 @@ def features(cfg, rs: list[dict], bsz: int):
     if key not in _features:
         batches = []
         for i in range(0, len(rs), bsz):
+            if len(rs) > 2 * bsz:  # a 10k set takes a while the first time, and nothing else is reporting then
+                progress.tick("positions", i, len(rs), "positions", note="encoding held-out human positions, once a run")
             ch = rs[i:i + bsz]
             encoded = [maia.replay_features(cfg, r["moves"]) for r in ch]
             boards = [b for b, _, _ in encoded]
@@ -54,6 +56,8 @@ def features(cfg, rs: list[dict], bsz: int):
             idx = torch.tensor([maia.MOVE_IDX[r["move"] if b.turn else maia.mirror_move(r["move"])]
                                 for b, r in zip(boards, ch)], device=cfg.device)
             batches.append((x, m, idx))
+        if len(rs) > 2 * bsz:
+            progress.tick("positions", len(rs), len(rs), "positions", force=True, note="held-out human positions encoded")
         _features[key] = (rs, batches)
     return _features[key][1]
 
@@ -176,7 +180,12 @@ def human_moves(T: int, n: int = 3000) -> list[tuple]:
     return out
 
 
-def humanlike(moves: list[tuple], on_progress=None) -> dict:
+def humanlike(moves: list[tuple], on_progress=None, job: str | None = None, what: str = "") -> dict:
+    # job names a progress feed for the analysis, so its minutes are not silent.
+    if job and on_progress is None:
+        on_progress = lambda n: progress.tick(job, n, len(moves), "positions", force=n == len(moves),
+                                              note=f"{what} · Stockfish mistake analysis")
+        on_progress(0)
     res = []
     for r in arena.pool().imap(_analyse, moves, chunksize=16):
         res.append(r)

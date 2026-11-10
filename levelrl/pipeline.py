@@ -238,42 +238,56 @@ def st_baselines(ctx):
     u, base, out = ctx.units, load("base"), {}
     mean_err = sum(r["lichess"] - r["dial"] for r in base["curve"]) / len(base["curve"])
     lich = lambda games: u.lich(gauntlet.rate(games, ctx.elo))
+    part = RUN / "baselines.partial.json"  # finished grids and rows, so a restart does not replay them
+    state = json.loads(part.read_text()) if part.exists() else {}
+    keep = lambda: part.write_text(json.dumps(state))
     for T in base["targets"]:
-        dials = [d for d in DIAL_GRID if abs(d - T) <= 500]
-        played = ctx.adaptive(ctx.base, {**POLICY, "self_elo": 0, "oppo_elo": 0}, dials, "baselines",
-                              lambda d: f"maia3@{d}", seed=6000 + T, n_main=100)
-        dial_pts = [(d, lich(played[d])) for d in dials]
-        d_star, d_ok = crossing(dial_pts, T)
-        temps = {t: {"self_elo": T, "oppo_elo": T, "temp": t} for t in TEMP_GRID}
-        played = ctx.adaptive(ctx.base, {**POLICY, "self_elo": T, "oppo_elo": T}, temps, "baselines",
-                              lambda t: f"maia3@{T} temp {t}", seed=6500 + T, n_main=100)
-        temp_pts = [(t, lich(played[t])) for t in TEMP_GRID]
-        neg, t_ok = crossing([(-t, e) for t, e in temp_pts], T)  # hotter plays weaker
-        cands = [("dial as asked", T, 1.0, True), ("remap", int(round(d_star / 10) * 10), 1.0, d_ok),
-                 ("offset", int(round((T - mean_err) / 10) * 10), 1.0, True), ("temperature", T, round(-neg, 2), t_ok)]
-        say(f"baselines for {T}: remap to dial {cands[1][1]}" + ("" if d_ok else " (grid never reaches it)")
-            + f", offset dial {cands[2][1]}, temperature {cands[3][2]}" + ("" if t_ok else " (grid never reaches it)"))
+        st = state.setdefault(str(T), {"rows": []})
+        if "cands" not in st:
+            dials = [d for d in DIAL_GRID if abs(d - T) <= 500]
+            played = ctx.adaptive(ctx.base, {**POLICY, "self_elo": 0, "oppo_elo": 0}, dials, "baselines",
+                                  lambda d: f"maia3@{d}", seed=6000 + T, n_main=100)
+            dial_pts = [(d, lich(played[d])) for d in dials]
+            d_star, d_ok = crossing(dial_pts, T)
+            temps = {t: {"self_elo": T, "oppo_elo": T, "temp": t} for t in TEMP_GRID}
+            played = ctx.adaptive(ctx.base, {**POLICY, "self_elo": T, "oppo_elo": T}, temps, "baselines",
+                                  lambda t: f"maia3@{T} temp {t}", seed=6500 + T, n_main=100)
+            temp_pts = [(t, lich(played[t])) for t in TEMP_GRID]
+            neg, t_ok = crossing([(-t, e) for t, e in temp_pts], T)  # hotter plays weaker
+            st.update(dial_grid=dial_pts, temp_grid=temp_pts, cands=[
+                ["dial as asked", T, 1.0, True], ["remap", int(round(d_star / 10) * 10), 1.0, d_ok],
+                ["offset", int(round((T - mean_err) / 10) * 10), 1.0, True], ["temperature", T, round(-neg, 2), t_ok]])
+            keep()
+        cands = st["cands"]
+        say(f"baselines for {T}: remap to dial {cands[1][1]}" + ("" if cands[1][3] else " (grid never reaches it)")
+            + f", offset dial {cands[2][1]}, temperature {cands[3][2]}" + ("" if cands[3][3] else " (grid never reaches it)"))
         ref = ctx.base_scores(T)["fid_T"]
         rows_T = evals.probe_sets(T)["fid_T"]
-        res = []
         for i, (method, d, t, ok) in enumerate(cands):
-            pol = {**POLICY, "self_elo": d, "oppo_elo": d, "temp": t}
-            games = gauntlet.play(ctx.cfg, ctx.base, pol, u.closest(T, 3), ctx.suite[:EVAL_OPENINGS] * 2, seed=6900 + i,
-                                  name="baselines", elo=ctx.elo, label=f"{method}: dial {d}, temp {t}", cycle=True)
-            r = ctx.rated(games)
-            raw = evals.score(ctx.cfg, ctx.base, rows_T, self_elo=d, temp=t)
-            fid = evals.summary(raw)
-            fid["top1_vs_base_ci"] = [100 * x for x in evals.paired_ci(raw["hit"], ref["hit"])]
-            fid["sce_vs_base_ci"] = evals.paired_ci(raw["nll"], ref["nll"])
-            row = {"method": method, "dial": d, "temp": t, "reaches": ok, "elo": u.lich(r["ladder"]),
-                   "elo_ci": [u.lich(x) for x in r["ladder_ci"]], "elo_ci_units": u.ci(r["ladder"], r["ladder_ci"]),
-                   "ladder": r, "fidelity": fid, "humanlike": evals.humanlike(evals.moves_of(games, HUMANLIKE_MOVES))}
-            res.append(row)
-            save_games(RUN / "games" / f"baseline_{T}_{method.replace(' ', '_')}.json", games)
+            if i < len(st["rows"]):
+                row = st["rows"][i]
+            else:
+                pol = {**POLICY, "self_elo": d, "oppo_elo": d, "temp": t}
+                games = gauntlet.play(ctx.cfg, ctx.base, pol, u.closest(T, 3), ctx.suite[:EVAL_OPENINGS] * 2, seed=6900 + i,
+                                      name="baselines", elo=ctx.elo, label=f"{method}: dial {d}, temp {t}", cycle=True)
+                r = ctx.rated(games)
+                raw = evals.score(ctx.cfg, ctx.base, rows_T, self_elo=d, temp=t)
+                fid = evals.summary(raw)
+                fid["top1_vs_base_ci"] = [100 * x for x in evals.paired_ci(raw["hit"], ref["hit"])]
+                fid["sce_vs_base_ci"] = evals.paired_ci(raw["nll"], ref["nll"])
+                row = {"method": method, "dial": d, "temp": t, "reaches": ok, "elo": u.lich(r["ladder"]),
+                       "elo_ci": [u.lich(x) for x in r["ladder_ci"]], "elo_ci_units": u.ci(r["ladder"], r["ladder_ci"]),
+                       "ladder": r, "fidelity": fid,
+                       "humanlike": evals.humanlike(evals.moves_of(games, HUMANLIKE_MOVES), job="baselines",
+                                                    what=f"{method}: dial {d}, temp {t}")}
+                st["rows"].append(row)
+                keep()
+                save_games(RUN / "games" / f"baseline_{T}_{method.replace(' ', '_')}.json", games)
+            fid = row["fidelity"]
             say(f"baseline {method} for {T}: dial {d}, temp {t}: Elo {row['elo']:.0f} [{row['elo_ci'][0]:.0f}, "
                 f"{row['elo_ci'][1]:.0f}], top-1 {fid['top1']:.1f}% ({fid['top1_vs_base_ci'][0]:+.1f} to "
                 f"{fid['top1_vs_base_ci'][1]:+.1f} vs the dial as asked)")
-        out[T] = {"dial_grid": dial_pts, "temp_grid": temp_pts, "mean_error": mean_err, "methods": res}
+        out[T] = {"dial_grid": st["dial_grid"], "temp_grid": st["temp_grid"], "mean_error": mean_err, "methods": st["rows"]}
     return out
 
 
@@ -415,7 +429,7 @@ def finish_arm(ctx, T, tr: Trainer, frac: float, start: float) -> dict:
     for d in (T - 200, T, T + 200):
         r = ctx.rated([g for g in played if g["dial"] == d])
         sens[d] = {"elo": u.lich(r["ladder"]), "elo_ci": [u.lich(x) for x in r["ladder_ci"]], **r}
-    hl = evals.humanlike(evals.moves_of(games, HUMANLIKE_MOVES))
+    hl = evals.humanlike(evals.moves_of(games, HUMANLIKE_MOVES), job=f"{tr.name}:mistakes", what=f"policy@{T} final")
     tr.report("final checks complete", force=True, stats=stats(2, final_total, False))
     del model
     torch.cuda.empty_cache()
@@ -551,6 +565,7 @@ def main():
     if not (RUN / "manifest.json").exists():
         (RUN / "manifest.json").write_text(man.read_text() if man.exists() else json.dumps({"commit": None}))
     say(f"code: {json.loads((RUN / 'manifest.json').read_text()).get('commit') or 'unknown commit, not deployed with scripts/deploy.sh'}")
+    progress.tick("pipeline", sum(done(n) for n in STAGES), len(STAGES), "stages", force=True, note="loading the model")
     ctx = Ctx()
     try:
         for i, name in enumerate(STAGES):

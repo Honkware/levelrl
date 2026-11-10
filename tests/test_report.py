@@ -12,7 +12,7 @@ def test_the_summary_is_written_from_run_files_and_lists_every_arm(tmp_path):
     pr = {"calib": {"top1": 50.0, "sce": 2.0}, "band_1500": {"top1": 51.0, "sce": 1.9}}
     ev = lambda tag, u, elo: {"tag": tag, "update": u, "elo": elo, "elo_ci": [elo - 40, elo + 40], "probe": pr,
                               "entropy": 2.0, "kl_base": 0.01, "threefold": 0.02, "book": 0.5}
-    arm = {"T": 1500, "goal": 1500.0, "start": 1650.0, "frac": 1.0, "weight": -2.5, "bias": 12.0,
+    arm = {"T": 1500, "goal": 1500.0, "start": 1650.0, "frac": 1.0, "weight": -2.5, "bias": 12.0, "games": 1600, "updates": 50, "stopped_early": 50,
            "held": {"updates": 30, "mean": 1512.0, "sd": 21.0, "in_band": 0.9}, "evals": [ev("25", 25, 1600.0), ev("final", 90, 1520.0)],
            "final": {"tag": "final", "elo": 1520.0, "elo_ci": [1480.0, 1560.0], "elo_ci_units": [1440.0, 1600.0],
                      "ladder": {"ladder": 1550.0},
@@ -33,7 +33,7 @@ def test_the_summary_is_written_from_run_files_and_lists_every_arm(tmp_path):
         (run / f"{k}.json").write_text(json.dumps(v))
     assert report.write(run, res) == {"arms": 1, "catalog": 0}
     text = (res / "summary.md").read_text()
-    assert "| 100% of the way, 1500 | 1550 | 1520 | 1480 to 1560 | 1440 to 1600 | +20 | 90% | 21 | -2.50 |" in text
+    assert "| 100% of the way, 1500 | 1550 | 1520 | 1480 to 1560 | 1440 to 1600 | +20 | 90% | 21 | -2.50 | 1,600 (stopped early) |" in text
     assert "| remap | 1380 | 1.0 | 1495 | 1460 to 1530 | -5 | 51.0 | -0.6 to -0.1 | +0.001 to +0.004 |" in text
     assert "no training: remap" in text
     assert "humans at 1500" in text and "-130" in text and "5.0 ± 4.3" in text

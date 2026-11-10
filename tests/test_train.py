@@ -86,3 +86,12 @@ def test_latest_evaluation_metrics_survive_later_training_reports(monkeypatch):
     resumed.name, resumed.T, resumed.games, resumed.st = t.name, t.T, t.games, t.st
     resumed.report("update 27")
     assert calls[-1]["stats"]["elo"] == "1510" and calls[-1]["stats"]["top1"] == "52.4%"
+
+
+def test_training_stops_once_the_rating_has_held_the_band_for_a_run_of_updates():
+    from levelrl.train import HOLD
+    t = trainer(1.0, goal=1500.0)
+    t.st["est"] = 1530.0
+    assert [t.settled() for _ in range(HOLD)] == [False] * (HOLD - 1) + [True]
+    t.st["est"] = 1570.0  # one update outside the band starts the count again
+    assert not t.settled() and t.st["streak"] == 0

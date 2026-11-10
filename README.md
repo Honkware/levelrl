@@ -28,7 +28,8 @@ against real games.
 - `levelrl/train.py` is the trainer. Groups of 8 games share an opening and an opponent. The loss is
   `w * PPO(outcome) + KL(policy || base model at the dial)`. `w` is a signed weight set by a PI controller on the
   gap between the arm's goal Elo and a rating of its last 256 training games, so it keeps growing until the goal
-  is reached and reverses on overshoot. Each eval corrects that rating against a gauntlet.
+  is reached and reverses on overshoot. Each eval corrects that rating against a gauntlet. An arm stops once
+  that rating has stayed within 50 Elo of its goal for 30 updates in a row, with 4,800 games as the cap.
 - Before any training, the pipeline measures what the frozen model can do for each dial: the dial setting that
   plays the wanted Elo (remap), one constant correction for all dials (offset), and the sampling temperature that
   plays it. Each is judged on human positions at the wanted band, and a trained arm has to beat them.

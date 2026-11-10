@@ -437,7 +437,8 @@ def finish_arm(ctx, T, tr: Trainer, frac: float, start: float) -> dict:
     return {"T": T, "goal": tr.goal, "start": start, "frac": frac, "evals": tr.st["evals"], "final": final,
             "band_pick": band_pick,
             "sensitivity": sens, "humanlike": hl, "recoveries": tr.st["recoveries"], "held": held(log, tr.goal),
-            "weight": tr.st["sign"], "bias": tr.st["bias"], "train_log": log,
+            "weight": tr.st["sign"], "bias": tr.st["bias"], "train_log": log, "updates": tr.st.get("update"),
+            "games": tr.st.get("games"), "stopped_early": tr.st.get("stopped_early"),
             "loss": {"kp": KP, "eta": ETA, "pull": PULL, "band": BAND, "ctrl_games": CTRL_GAMES}}
 
 
@@ -515,7 +516,8 @@ def st_sweep(ctx):
                 results[name] = res
                 fi, h = res["final"], res["held"]
                 say(f"{name} final: Elo {fi['elo']:.0f} [{fi['elo_ci'][0]:.0f}, {fi['elo_ci'][1]:.0f}] vs goal {tr.goal:.0f}, "
-                    f"top-1 {fi['fidelity']['top1']:.1f}%, in band {h.get('in_band', 0):.0%} of the last third")
+                    f"top-1 {fi['fidelity']['top1']:.1f}%, in band {h.get('in_band', 0):.0%} of the last third"
+                    + (f", stopped early at update {res['stopped_early']}" if res.get("stopped_early") else ", ran to the cap"))
         # Human-likeness of the untouched model and of real humans at each target, for the comparison.
         ref, checks = {}, []
         for T in targets:

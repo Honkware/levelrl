@@ -43,7 +43,8 @@ def write(run: Path, res: Path) -> dict:
             "fidelity_top1_vs_base_ci": fid.get("top1_vs_base_ci"), "fidelity_sce_vs_base_ci": fid.get("sce_vs_base_ci"),
             "keep_point_fidelity_drop": fid.get("top1_vs_base_ci") is not None and fid["top1_vs_base_ci"][1] < -FID_DROP_PP,
             "kl_base": next((x["kl_base"] for x in reversed(a.get("train_log", [])) if "kl_base" in x), None),
-            "weight": a.get("weight"), "held": a.get("held", {}), "bias": a.get("bias"), "band_pick": a.get("band_pick"),
+            "weight": a.get("weight"), "updates": a.get("updates"), "games": a.get("games"),
+            "stopped_early": a.get("stopped_early"), "held": a.get("held", {}), "bias": a.get("bias"), "band_pick": a.get("band_pick"),
             "curve": curve, "sensitivity": a["sensitivity"], "humanlike": a["humanlike"], "recoveries": a["recoveries"]}
         # Hack catalog: per-arm drift signals, and every eval where the judge rose while human fidelity fell.
         for e in a["evals"]:
@@ -152,14 +153,15 @@ def summary(res, anchors, base, cross, paretos, catalog, sweep, man=None, baseli
         L += [f"## Dial {T}", "", f"The base model plays {start:.0f} here. Each arm's goal is a share of the way to {T}, "
               "and the checkpoint reported is the last one, with no selection.", "",
               "Where each arm landed:", "",
-              "| goal | ladder | Elo | 95% CI in run | with units | vs goal | in band, last third | rating sd, last third | outcome weight at the end |",
-              "|---|---|---|---|---|---|---|---|---|"]
+              "| goal | ladder | Elo | 95% CI in run | with units | vs goal | in band, last third | rating sd, last third | outcome weight at the end | training games |",
+              "|---|---|---|---|---|---|---|---|---|---|"]
         for a in arms.values():
             h, cu = a.get("held") or {}, a.get("elo_ci_units")
             L.append(f"| {_arm(a)} | {a['ladder']:.0f} | {a['elo']:.0f} | {a['elo_ci'][0]:.0f} to {a['elo_ci'][1]:.0f} | "
                      + (f"{cu[0]:.0f} to {cu[1]:.0f}" if cu else "n/a") + f" | {a['distance_to_goal']:+.0f} | "
                      + (f"{h['in_band']:.0%} | {h['sd']:.0f}" if h else "n/a | n/a")
-                     + (f" | {a['weight']:+.2f} |" if a.get("weight") is not None else " | n/a |"))
+                     + (f" | {a['weight']:+.2f} |" if a.get("weight") is not None else " | n/a |")
+                     + (f" {a['games']:,} ({'stopped early' if a.get('stopped_early') else 'the cap'}) |" if a.get("games") else " n/a |"))
         bl = ((baselines or {}).get(T) or (baselines or {}).get(str(T)) or {}).get("methods", [])
         if bl:
             L += ["", "What the frozen model does with no training. Each is set to play this dial's Elo and judged on "

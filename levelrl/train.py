@@ -53,6 +53,7 @@ RESIGN_P, RESIGN_N = 0.97, 6
 PULL = 150.0  # Elo from the band at which the outcome term is at full strength
 KP, ETA, NU_MAX = 1.0, 0.15, 50.0  # controller gains, and a cap that stops the sum winding up
 BAND = 50.0
+HOLD = 30  # updates in a row inside the band before training stops early
 DEAD = 15.0  # inside this many Elo of the goal the rating is noise and the controller holds still
 CTRL_GAMES, CTRL_MIN = 256, 64  # training games behind the running rating, and how many before it is trusted
 ENTROPY_FLOOR = 0.3  # collapse if entropy falls below this fraction of its first value
@@ -274,6 +275,14 @@ class Trainer:
         st["nu"] = max(-NU_MAX, min(NU_MAX, st["nu"] + ETA * e))
         st["sign"] = st["nu"] + KP * e
 
+    def settled(self) -> bool:
+        # True once the running rating has sat inside the band for HOLD updates in a row. Training past that buys
+        # nothing, and in the second run the outcome-only arm kept losing move-match after it had arrived.
+        st = self.st
+        inside = st.get("est") is not None and abs(self.goal - st["est"]) <= BAND
+        st["streak"] = st.get("streak", 0) + 1 if inside else 0
+        return st["streak"] >= HOLD
+
     def evaluate(self, tag: str, on_eval):
         if any(e.get("tag") == tag for e in self.st["evals"]):
             return
@@ -302,7 +311,7 @@ class Trainer:
             self.save()  # recover() needs something to go back to before the first periodic checkpoint
         if self.st["update"] in EVAL_AT:
             self.evaluate(str(self.st["update"]), on_eval)  # a run that died inside this eval resumes right here
-        while self.st["games"] < self.games:
+        while self.st["games"] < self.games and not self.st.get("stopped_early"):
             for g in a.step():
                 groups.setdefault(g["group"], []).append(g)
                 if len(groups[g["group"]]) == G:
@@ -333,6 +342,11 @@ class Trainer:
                 self.save()
             if u in EVAL_AT:
                 self.evaluate(str(u), on_eval)
+            if self.settled():
+                self.st["stopped_early"] = u
+                progress.event(self.name, f"held the band for {HOLD} updates, stopping at update {u}")
+        if self.st.get("stopped_early"):
+            self.games = self.st["games"]  # so the progress bar reads done
         self.evaluate("final", on_eval)
         (self.out / "train_log.json").write_text(json.dumps({k: v for k, v in self.st.items()}, indent=1))
         return self.st

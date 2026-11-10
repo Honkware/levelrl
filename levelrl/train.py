@@ -53,6 +53,7 @@ RESIGN_P, RESIGN_N = 0.97, 6
 PULL = 150.0  # Elo from the band at which the outcome term is at full strength
 KP, ETA, NU_MAX = 1.0, 0.15, 50.0  # controller gains, and a cap that stops the sum winding up
 BAND = 50.0
+DEAD = 15.0  # inside this many Elo of the goal the rating is noise and the controller holds still
 CTRL_GAMES, CTRL_MIN = 256, 64  # training games behind the running rating, and how many before it is trusted
 ENTROPY_FLOOR = 0.3  # collapse if entropy falls below this fraction of its first value
 
@@ -269,7 +270,7 @@ class Trainer:
         st = self.st
         st["est_raw"] = self.units.lich(gauntlet.rate(list(self.recent), self.elo))
         st["est"] = st["est_raw"] + st["bias"]
-        e = pull(self.goal, st["est"])
+        e = 0.0 if abs(self.goal - st["est"]) <= DEAD else pull(self.goal, st["est"])
         st["nu"] = max(-NU_MAX, min(NU_MAX, st["nu"] + ETA * e))
         st["sign"] = st["nu"] + KP * e
 

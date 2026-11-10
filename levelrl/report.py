@@ -27,6 +27,7 @@ def write(run: Path, res: Path) -> dict:
     rd = lambda n: json.loads((run / f"{n}.json").read_text())
     anchors, base, sweep = rd("anchors"), rd("base"), rd("sweep")
     cross = rd("crosscheck") if (run / "crosscheck.json").exists() else {}
+    baselines = rd("baselines") if (run / "baselines.json").exists() else {}
     arms = {n: rd(f"arm_{n}") for n in sweep["arms"]}
     paretos, catalog = {}, []
     for name, a in arms.items():
@@ -69,7 +70,8 @@ def write(run: Path, res: Path) -> dict:
     (res / "humanlike_reference.json").write_text(json.dumps(sweep["humanlike_reference"], indent=1))
     man = rd("manifest") if (run / "manifest.json").exists() else {}
     (res / "manifest.json").write_text(json.dumps(man, indent=1))
-    summary(res, anchors, base, cross, paretos, catalog, sweep, man)
+    (res / "baselines.json").write_text(json.dumps(baselines, indent=1))
+    summary(res, anchors, base, cross, paretos, catalog, sweep, man, baselines)
     try:
         plots(res, anchors, base, paretos)
     except Exception as e:  # the tables are the result, a plotting failure must not cost them
@@ -123,7 +125,7 @@ def _arm(a: dict) -> str:
     return f"{a['frac']:.0%} of the way, {a['goal']:.0f}"
 
 
-def summary(res, anchors, base, cross, paretos, catalog, sweep, man=None):
+def summary(res, anchors, base, cross, paretos, catalog, sweep, man=None, baselines=None):
     f = anchors["fit"][anchors["fit"]["use"]]
     L = ["# LevelRL results", "", f"Code: commit {(man or {}).get('commit') or 'not recorded'}.", "",
          f"Units: Lichess blitz = {f['a']:.0f} + {f['b']:.3f} x ladder ({anchors['fit']['use']} fit, "
@@ -158,6 +160,18 @@ def summary(res, anchors, base, cross, paretos, catalog, sweep, man=None):
                      + (f"{cu[0]:.0f} to {cu[1]:.0f}" if cu else "n/a") + f" | {a['distance_to_goal']:+.0f} | "
                      + (f"{h['in_band']:.0%} | {h['sd']:.0f}" if h else "n/a | n/a")
                      + (f" | {a['weight']:+.2f} |" if a.get("weight") is not None else " | n/a |"))
+        bl = ((baselines or {}).get(T) or (baselines or {}).get(str(T)) or {}).get("methods", [])
+        if bl:
+            L += ["", "What the frozen model does with no training. Each is set to play this dial's Elo and judged on "
+                  "the same 10,000 human positions at this band. An arm has to beat these to be worth training:", "",
+                  "| method | dial | temperature | Elo | 95% CI in run | vs dial | top-1 | vs dial as asked (pp, 95% CI) | log-loss vs it (nats, 95% CI) |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+            for b in bl:
+                fd = b["fidelity"]
+                L.append(f"| {b['method']}{'' if b['reaches'] else ' (grid never reaches the dial)'} | {b['dial']} | {b['temp']} | "
+                         f"{b['elo']:.0f} | {b['elo_ci'][0]:.0f} to {b['elo_ci'][1]:.0f} | {b['elo'] - int(T):+.0f} | {fd['top1']:.1f} | "
+                         f"{fd['top1_vs_base_ci'][0]:+.1f} to {fd['top1_vs_base_ci'][1]:+.1f} | "
+                         f"{fd['sce_vs_base_ci'][0]:+.3f} to {fd['sce_vs_base_ci'][1]:+.3f} |")
         L += ["", "What it cost in human-likeness, on 10,000 held-out human positions at this band:", "",
               "| goal | Elo moved | top-1 | vs base (pp, 95% CI) | log-loss vs base (nats, 95% CI) | KL to base |",
               "|---|---|---|---|---|---|"]
@@ -197,6 +211,7 @@ def summary(res, anchors, base, cross, paretos, catalog, sweep, man=None):
         r = ref.get(T) or ref.get(int(T)) or {}
         L += [_hl(f"humans at {T}", r["human"])] if "human" in r else []
         L += [_hl("base model", r["base"])] if "base" in r else []
+        L += [_hl(f"no training: {b['method']}", b["humanlike"]) for b in bl if b["method"] != "dial as asked"]
         L += [_hl(_arm(a), a["humanlike"]) for a in arms.values()]
         L.append("")
     L += ["## Hack catalog", "", f"{len(catalog)} entries, in hack_catalog.json with example PGNs.", ""]

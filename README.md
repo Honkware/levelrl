@@ -29,9 +29,12 @@ against real games.
   `w * PPO(outcome) + KL(policy || base model at the dial)`. `w` is a signed weight set by a PI controller on the
   gap between the arm's goal Elo and a rating of its last 256 training games, so it keeps growing until the goal
   is reached and reverses on overshoot. Each eval corrects that rating against a gauntlet.
+- Before any training, the pipeline measures what the frozen model can do for each dial: the dial setting that
+  plays the wanted Elo (remap), one constant correction for all dials (offset), and the sampling temperature that
+  plays it. Each is judged on human positions at the wanted band, and a trained arm has to beat them.
 - `levelrl/evals.py` holds what never feeds a reward: move-match on held-out human positions, blunder types and
   per-phase error rates judged by Stockfish, opening-book overlap and repetition rate.
-- `levelrl/pipeline.py` runs all of it: snapshot, anchors, Maia-1 cross-check, base curve, smoke run, a sweep of
+- `levelrl/pipeline.py` runs all of it: snapshot, anchors, Maia-1 cross-check, base curve, baselines, smoke run, a sweep of
   four goals per dial (25, 50, 75 and 100% of the way from where the base model plays to the dial), and the report.
 
 ## Running it

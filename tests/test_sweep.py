@@ -165,3 +165,9 @@ def test_final_checks_report_one_accumulating_total(monkeypatch, tmp_path):
     assert result["band_pick"] is None  # neither eval measured inside the band
     assert final[-1]["final_active"] is False
     assert result["final"]["fidelity"]["top1"] == 50.0
+
+
+def test_the_setting_that_plays_a_target_is_read_off_a_noisy_curve_made_monotone():
+    setting, inside = pipeline.crossing([(900, 1050), (1000, 1120), (1100, 1100), (1200, 1300)], 1100)
+    assert inside and abs(setting - 1025) < 1e-9
+    assert pipeline.crossing([(900, 1200), (1000, 1300)], 1100) == (900, False)  # the grid never plays that weak

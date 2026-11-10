@@ -37,7 +37,7 @@ SMOKE_GAMES = 320
 EVAL_OPENINGS = 200
 SENS_OPENINGS = 100
 HUMANLIKE_MOVES = 16_000
-STAGES = ("snapshot", "anchors", "crosscheck", "base", "smoke", "sweep", "report")
+STAGES = ("snapshot", "anchors", "crosscheck", "base", "baselines", "smoke", "sweep", "report")
 OPTIONAL = ("crosscheck",)
 
 
@@ -90,27 +90,30 @@ class Ctx:
         return {"ladder": r, "ladder_ci": ci, "se": (ci[1] - ci[0]) / 3.92, "games": len(games),
                 "score": sum(g["score"] for g in games) / len(games)}
 
-    def adaptive(self, model, policy, dials, name, label, seed, n_main=200) -> dict[int, list]:
-        # For each dial, a short pilot against rungs spread over the ladder, then the main block against the three
-        # rungs nearest the pilot's estimate, so most games are played where they say the most. All dials share
-        # one arena per phase.
+    def adaptive(self, model, policy, variants, name, label, seed, n_main=200) -> dict:
+        # For each variant, a short pilot against rungs spread over the ladder, then the main block against the
+        # three rungs nearest the pilot's estimate, so most games are played where they say the most. A variant
+        # is a dial setting, or any dict of per-game overrides (self_elo, oppo_elo, temp). All share one arena
+        # per phase.
+        if not isinstance(variants, dict):
+            variants = {d: {"self_elo": d, "oppo_elo": d} for d in variants}
         rng = random.Random(seed)
         rungs = sorted(self.elo, key=self.elo.get)
         spread = [rungs[round(i * (len(rungs) - 1) / 3)] for i in range(4)]
-        spec = lambda d, opp, op, w: {"opp": opp, "opening": op, "white": w, "seed": rng.getrandbits(31),
-                                      "self_elo": d, "oppo_elo": d, "dial": d, "label": label(d)}
-        todo = [spec(d, o, op, w) for d in dials for o in spread for op in self.suite[:6] for w in (True, False)]
+        spec = lambda k, opp, op, w: {"opp": opp, "opening": op, "white": w, "seed": rng.getrandbits(31),
+                                      **variants[k], "dial": k, "label": label(k)}
+        todo = [spec(k, o, op, w) for k in variants for o in spread for op in self.suite[:6] for w in (True, False)]
         rng.shuffle(todo)
-        by = {d: [] for d in dials}
-        for g in gauntlet.run(self.cfg, model, policy, todo, seed, name, label=f"{len(dials)} dials, pilot"):
+        by = {k: [] for k in variants}
+        for g in gauntlet.run(self.cfg, model, policy, todo, seed, name, label=f"{len(variants)} settings, pilot"):
             by[g["dial"]].append(g)
         todo = []
-        for d in dials:
-            est = gauntlet.rate(by[d], self.elo)
+        for k in variants:
+            est = gauntlet.rate(by[k], self.elo)
             near = sorted(self.elo, key=lambda n: abs(self.elo[n] - est))[:3]
-            todo += [spec(d, near[i % 3], op, w) for i, op in enumerate(self.suite[6:6 + n_main]) for w in (True, False)]
+            todo += [spec(k, near[i % 3], op, w) for i, op in enumerate(self.suite[6:6 + n_main]) for w in (True, False)]
         rng.shuffle(todo)
-        for g in gauntlet.run(self.cfg, model, policy, todo, seed + 1, name, label=f"{len(dials)} dials",
+        for g in gauntlet.run(self.cfg, model, policy, todo, seed + 1, name, label=f"{len(variants)} settings",
                               versus="the rungs nearest each"):
             by[g["dial"]].append(g)
         return by
@@ -197,6 +200,83 @@ def st_base(ctx):
     return {"policy": POLICY, "curve": out, "targets": targets}
 
 
+def crossing(pts: list[tuple[float, float]], y: float) -> tuple[float, bool]:
+    # Where a noisy, increasing curve of (setting, Elo) points crosses y: pooled into a monotone curve, then
+    # linear between points. The flag says y was inside the measured range.
+    pts = sorted(pts)
+    blocks = [[x, x, v, 1] for x, v in pts]  # first x, last x, mean, count
+    i = 0
+    while i < len(blocks) - 1:
+        if blocks[i][2] > blocks[i + 1][2]:
+            a, b = blocks[i], blocks.pop(i + 1)
+            blocks[i] = [a[0], b[1], (a[2] * a[3] + b[2] * b[3]) / (a[3] + b[3]), a[3] + b[3]]
+            i = max(0, i - 1)
+        else:
+            i += 1
+    fit = [((b[0] + b[1]) / 2, b[2]) for b in blocks]
+    if y <= fit[0][1]:
+        return pts[0][0], y == fit[0][1]
+    if y >= fit[-1][1]:
+        return pts[-1][0], y == fit[-1][1]
+    for (x0, v0), (x1, v1) in zip(fit, fit[1:]):
+        if v0 <= y <= v1:
+            return x0 + (x1 - x0) * (y - v0) / (v1 - v0), True
+    return pts[-1][0], False
+
+
+DIAL_GRID = range(600, 2601, 100)
+TEMP_GRID = (0.1, 0.4, 0.7, 1.0, 1.3, 1.6, 2.0, 2.5)
+
+
+def st_baselines(ctx):
+    # What the frozen model can do with no training, measured the way the arms are: reach Elo T, then be judged
+    # on human positions at band T. If one of these lands in the band and keeps more move-match than the trained
+    # arms, it is the better tool and RL is not needed for that dial.
+    #   remap:  the dial setting that plays T, found on a grid of dials within 500 of T
+    #   offset: T minus the base curve's mean error, one correction for every dial
+    #   temp:   dial left at T, the sampling temperature that plays T
+    u, base, out = ctx.units, load("base"), {}
+    mean_err = sum(r["lichess"] - r["dial"] for r in base["curve"]) / len(base["curve"])
+    lich = lambda games: u.lich(gauntlet.rate(games, ctx.elo))
+    for T in base["targets"]:
+        dials = [d for d in DIAL_GRID if abs(d - T) <= 500]
+        played = ctx.adaptive(ctx.base, {**POLICY, "self_elo": 0, "oppo_elo": 0}, dials, "baselines",
+                              lambda d: f"maia3@{d}", seed=6000 + T, n_main=100)
+        dial_pts = [(d, lich(played[d])) for d in dials]
+        d_star, d_ok = crossing(dial_pts, T)
+        temps = {t: {"self_elo": T, "oppo_elo": T, "temp": t} for t in TEMP_GRID}
+        played = ctx.adaptive(ctx.base, {**POLICY, "self_elo": T, "oppo_elo": T}, temps, "baselines",
+                              lambda t: f"maia3@{T} temp {t}", seed=6500 + T, n_main=100)
+        temp_pts = [(t, lich(played[t])) for t in TEMP_GRID]
+        neg, t_ok = crossing([(-t, e) for t, e in temp_pts], T)  # hotter plays weaker
+        cands = [("dial as asked", T, 1.0, True), ("remap", int(round(d_star / 10) * 10), 1.0, d_ok),
+                 ("offset", int(round((T - mean_err) / 10) * 10), 1.0, True), ("temperature", T, round(-neg, 2), t_ok)]
+        say(f"baselines for {T}: remap to dial {cands[1][1]}" + ("" if d_ok else " (grid never reaches it)")
+            + f", offset dial {cands[2][1]}, temperature {cands[3][2]}" + ("" if t_ok else " (grid never reaches it)"))
+        ref = ctx.base_scores(T)["fid_T"]
+        rows_T = evals.probe_sets(T)["fid_T"]
+        res = []
+        for i, (method, d, t, ok) in enumerate(cands):
+            pol = {**POLICY, "self_elo": d, "oppo_elo": d, "temp": t}
+            games = gauntlet.play(ctx.cfg, ctx.base, pol, u.closest(T, 3), ctx.suite[:EVAL_OPENINGS] * 2, seed=6900 + i,
+                                  name="baselines", elo=ctx.elo, label=f"{method}: dial {d}, temp {t}", cycle=True)
+            r = ctx.rated(games)
+            raw = evals.score(ctx.cfg, ctx.base, rows_T, self_elo=d, temp=t)
+            fid = evals.summary(raw)
+            fid["top1_vs_base_ci"] = [100 * x for x in evals.paired_ci(raw["hit"], ref["hit"])]
+            fid["sce_vs_base_ci"] = evals.paired_ci(raw["nll"], ref["nll"])
+            row = {"method": method, "dial": d, "temp": t, "reaches": ok, "elo": u.lich(r["ladder"]),
+                   "elo_ci": [u.lich(x) for x in r["ladder_ci"]], "elo_ci_units": u.ci(r["ladder"], r["ladder_ci"]),
+                   "ladder": r, "fidelity": fid, "humanlike": evals.humanlike(evals.moves_of(games, HUMANLIKE_MOVES))}
+            res.append(row)
+            save_games(RUN / "games" / f"baseline_{T}_{method.replace(' ', '_')}.json", games)
+            say(f"baseline {method} for {T}: dial {d}, temp {t}: Elo {row['elo']:.0f} [{row['elo_ci'][0]:.0f}, "
+                f"{row['elo_ci'][1]:.0f}], top-1 {fid['top1']:.1f}% ({fid['top1_vs_base_ci'][0]:+.1f} to "
+                f"{fid['top1_vs_base_ci'][1]:+.1f} vs the dial as asked)")
+        out[T] = {"dial_grid": dial_pts, "temp_grid": temp_pts, "mean_error": mean_err, "methods": res}
+    return out
+
+
 def make_eval(ctx, T):
     base_raw = None
     prev = {}
@@ -211,7 +291,7 @@ def make_eval(ctx, T):
                               name=f"{tr.name}:eval", elo=ctx.elo, label=f"policy@{T} ({tag})", cycle=True)
         r = ctx.rated(games)
         lich, ci = u.lich(r["ladder"]), [u.lich(x) for x in r["ladder_ci"]]
-        pr, _ = evals.probe(ctx.cfg, tr.ema, base_raw, T, full=True)  # the 10k set too, for the band-aware pick
+        pr, _ = evals.probe(ctx.cfg, tr.ema, base_raw, T)  # includes the validation slice the band-aware pick uses
         last = tr.st["log"][-1] if tr.st["log"] else {}
         ev = {"tag": tag, "update": tr.st["update"], "games_trained": tr.st["games"], "elo": lich, "elo_ci": ci,
               "ladder": r, "probe": pr, "entropy": last.get("entropy"), "kl_base": last.get("kl_base"),
@@ -301,11 +381,11 @@ def finish_arm(ctx, T, tr: Trainer, frac: float, start: float) -> dict:
     save_games(tr.out / "confirm_final.games.json", games)
     torch.save(model.state_dict(), tr.out / "final.pt")
     # A second, selected checkpoint: of the evals that measured inside the band, the one that matches humans
-    # best on the 10k set. In the second run the outcome-only arm kept losing move-match after it had reached
+    # best on the validation slice, which shares no game or month with the 10k set it is then reported on. In the second run the outcome-only arm kept losing move-match after it had reached
     # the band (57.3, 55.2, 54.0% at 1900), so an earlier in-band checkpoint was the better model. Its Elo comes
     # from a fresh gauntlet, since "inside the band" was itself read off a noisy eval.
-    inband = [e for e in tr.st["evals"] if "elo" in e and abs(e["elo"] - tr.goal) <= BAND and e["probe"].get("fid_T")]
-    pick = max(inband, key=lambda e: e["probe"]["fid_T"]["top1"], default=None)
+    inband = [e for e in tr.st["evals"] if "elo" in e and abs(e["elo"] - tr.goal) <= BAND and e["probe"].get("val_T")]
+    pick = max(inband, key=lambda e: e["probe"]["val_T"]["top1"], default=None)
     band_pick = None
     if pick is not None and pick["tag"] == "final":
         band_pick = {**final, "eval_elo": pick["elo"]}

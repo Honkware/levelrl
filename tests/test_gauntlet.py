@@ -53,3 +53,11 @@ def test_play_reports_zero_of_total_before_the_first_arena_step(monkeypatch):
     assert args == ("gauntlet", 0, 2, "games")
     assert kwargs["force"] is True
     assert "starting" in kwargs["note"]
+
+
+def test_each_row_can_be_sampled_at_its_own_temperature():
+    gen = torch.Generator().manual_seed(0)
+    logits = torch.tensor([[2.0, 1.0, 0.0]]).repeat(4000, 1)
+    temp = torch.tensor([0.05] * 2000 + [5.0] * 2000)[:, None]
+    picks = gauntlet.sample(logits, temp, 1.0, gen)
+    assert (picks[:2000] == 0).all() and 0.25 < (picks[2000:] == 0).float().mean() < 0.55

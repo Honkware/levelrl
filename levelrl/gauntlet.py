@@ -28,7 +28,9 @@ def sampler(cfg, model, policy: dict, gen: torch.Generator, bsz: int = int(os.en
             se = [g["spec"].get("self_elo", policy["self_elo"]) for g in ch]
             oe = [g["spec"].get("oppo_elo", policy["oppo_elo"]) for g in ch]
             logits, _ = maia.run(model, x, m, se, oe, dev)
-            for g, j in zip(ch, sample(logits, policy["temp"], policy["top_p"], gen).tolist()):
+            temps = [g["spec"].get("temp", policy["temp"]) for g in ch]
+            temp = temps[0] if len(set(temps)) == 1 else torch.tensor(temps, device=logits.device)[:, None]
+            for g, j in zip(ch, sample(logits, temp, policy["top_p"], gen).tolist()):
                 out.append(maia.to_move(g["board"], j))
         return out
     return mover
@@ -36,7 +38,8 @@ def sampler(cfg, model, policy: dict, gen: torch.Generator, bsz: int = int(os.en
 
 def sample(logits: torch.Tensor, temp: float, top_p: float, gen: torch.Generator) -> torch.Tensor:
     # Batched maia3.uci.sample_from_logits: nucleus after temperature, top move always kept.
-    if temp <= 0:
+    # temp is one number, or a column with one temperature a row.
+    if not torch.is_tensor(temp) and temp <= 0:
         return logits.argmax(-1)
     p = torch.softmax(logits / temp, -1)
     if top_p < 1.0:

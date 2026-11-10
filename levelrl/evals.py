@@ -13,7 +13,7 @@ from levelrl import arena, data, maia
 # Measurements that never feed a reward: move-match probes on held-out human positions, the human-likeness
 # analysis (blunder types and per-phase error rates judged by Stockfish), and opening-book overlap.
 
-PROBE_N, BAND_N, FID_N = 2000, 1000, 10_000
+PROBE_N, BAND_N, VAL_N, FID_N = 2000, 1000, 5000, 10_000
 BLUNDER, MISTAKE = 200, 100
 NODES = 100_000
 VAL = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0}
@@ -34,6 +34,9 @@ def probe_sets(T: int | None = None) -> dict[str, list[dict]]:
     for b in data.BANDS:
         s[f"band_{b}"] = rows(f"fid_{b}")[:BAND_N]
     if T is not None and T in data.BANDS:
+        # val_T is for choosing between checkpoints, fid_T is only ever reported. The band files hold one position
+        # a game in month order, so the two slices share no game and come from different months.
+        s["val_T"] = rows(f"fid_{T}")[BAND_N:BAND_N + VAL_N]
         s["fid_T"] = rows(f"fid_{T}")[-FID_N:]
     return s
 
@@ -56,7 +59,7 @@ def features(cfg, rs: list[dict], bsz: int):
 
 
 @torch.no_grad()
-def score(cfg, model, rs: list[dict], self_elo: int | None = None, bsz: int = 1024) -> dict:
+def score(cfg, model, rs: list[dict], self_elo: int | None = None, bsz: int = 1024, temp: float = 1.0) -> dict:
     # Per position: did argmax match the human move, and the human move's negative log-likelihood. Ratings are
     # the row's own unless self_elo pins the dial. Features are fixed, so retain them on the device across arms.
     hit, nll = [], []
@@ -65,7 +68,7 @@ def score(cfg, model, rs: list[dict], self_elo: int | None = None, bsz: int = 10
         se = [self_elo or r["elo"] for r in ch]
         oe = [self_elo or r["oppo_elo"] for r in ch]
         logits, _ = maia.run(model, x, m, se, oe, cfg.device)
-        lp = torch.log_softmax(logits, -1)
+        lp = torch.log_softmax(logits / temp, -1)
         hit += (logits.argmax(-1) == idx).int().tolist()
         nll += (-lp.gather(1, idx[:, None])[:, 0]).tolist()
     return {"hit": hit, "nll": nll}
@@ -95,7 +98,7 @@ def probe(cfg, model, base_scores: dict | None, T: int | None, full: bool = Fals
         sets.pop("fid_T", None)
     raw, out = {}, {}
     for k, rs in sets.items():
-        raw[k] = score(cfg, model, rs, self_elo=T if k == "fid_T" else None)
+        raw[k] = score(cfg, model, rs, self_elo=T if k in ("fid_T", "val_T") else None)
         out[k] = summary(raw[k])
         if base_scores and k in base_scores:
             out[k]["top1_vs_base_ci"] = [100 * x for x in paired_ci(raw[k]["hit"], base_scores[k]["hit"])]

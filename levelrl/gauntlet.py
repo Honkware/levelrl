@@ -64,7 +64,8 @@ def play(cfg, model, policy: dict, opponents: list[str], openings: list[list[str
 
 
 def run(cfg, model, policy: dict, todo: list[dict], seed: int = 0, name: str = "gauntlet",
-        elo: dict[str, float] | None = None, label: str = "maia", versus: str = "the ladder") -> list[dict]:
+        elo: dict[str, float] | None = None, label: str = "maia", versus: str = "the ladder",
+        on_progress=None) -> list[dict]:
     # Plays a prepared list of game specs. A spec may carry its own self_elo, oppo_elo and label, so several dial
     # settings share one arena. A gauntlet on its own spends much of its time on its last few long games with the
     # engine workers idle, and sharing the arena overlaps those tails.
@@ -79,6 +80,9 @@ def run(cfg, model, policy: dict, todo: list[dict], seed: int = 0, name: str = "
         if not new:
             continue  # steps come many times a second now, the stats only move when a game ends
         done += new
+        if on_progress:
+            for _ in new:
+                on_progress()
         if elo and len(done) % 20 < len(new):
             est = rate(done, elo)
         stats = {"score": f"{sum(x['score'] for x in done) / len(done):.0%}",

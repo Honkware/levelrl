@@ -128,7 +128,8 @@ def _arm(a: dict) -> str:
 
 def summary(res, anchors, base, cross, paretos, catalog, sweep, man=None, baselines=None):
     f = anchors["fit"][anchors["fit"]["use"]]
-    L = ["# LevelRL results", "", f"Code: commit {(man or {}).get('commit') or 'not recorded'}.", "",
+    partial = [f"> **Partial run:** {sweep['partial']}", ""] if sweep.get("partial") else []
+    L = partial + ["# LevelRL results", "", f"Code: commit {(man or {}).get('commit') or 'not recorded'}.", "",
          f"Units: Lichess blitz = {f['a']:.0f} + {f['b']:.3f} x ladder ({anchors['fit']['use']} fit, "
          f"slope 95% CI {f['b_ci'][0]:.3f} to {f['b_ci'][1]:.3f}), snapshot {anchors['snapshot']}. "
          "Elo intervals marked \"in run\" are the gauntlet's bootstrap interval carried through this fit, which is "

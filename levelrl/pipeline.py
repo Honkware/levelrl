@@ -90,7 +90,7 @@ class Ctx:
         return {"ladder": r, "ladder_ci": ci, "se": (ci[1] - ci[0]) / 3.92, "games": len(games),
                 "score": sum(g["score"] for g in games) / len(games)}
 
-    def adaptive(self, model, policy, variants, name, label, seed, n_main=200) -> dict:
+    def adaptive(self, model, policy, variants, name, label, seed, n_main=200, on_progress=None) -> dict:
         # For each variant, a short pilot against rungs spread over the ladder, then the main block against the
         # three rungs nearest the pilot's estimate, so most games are played where they say the most. A variant
         # is a dial setting, or any dict of per-game overrides (self_elo, oppo_elo, temp). All share one arena
@@ -105,7 +105,8 @@ class Ctx:
         todo = [spec(k, o, op, w) for k in variants for o in spread for op in self.suite[:6] for w in (True, False)]
         rng.shuffle(todo)
         by = {k: [] for k in variants}
-        for g in gauntlet.run(self.cfg, model, policy, todo, seed, name, label=f"{len(variants)} settings, pilot"):
+        for g in gauntlet.run(self.cfg, model, policy, todo, seed, name, label=f"{len(variants)} settings, pilot",
+                              on_progress=on_progress):
             by[g["dial"]].append(g)
         todo = []
         for k in variants:
@@ -114,7 +115,7 @@ class Ctx:
             todo += [spec(k, near[i % 3], op, w) for i, op in enumerate(self.suite[6:6 + n_main]) for w in (True, False)]
         rng.shuffle(todo)
         for g in gauntlet.run(self.cfg, model, policy, todo, seed + 1, name, label=f"{len(variants)} settings",
-                              versus="the rungs nearest each"):
+                              versus="the rungs nearest each", on_progress=on_progress):
             by[g["dial"]].append(g)
         return by
 

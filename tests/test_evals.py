@@ -44,3 +44,11 @@ def test_humanlike_streams_position_progress_without_changing_its_results(monkey
     result = evals.humanlike([object()] * 65, on_progress=seen.append)
     assert seen == [64, 65]
     assert result["n"] == 65 and result["by_phase"]["opening"]["n"] == 65
+
+
+def test_probe_sets_include_custom_human_bands(monkeypatch):
+    rows = [{"move": "e2e4"}] * (evals.BAND_N + evals.VAL_N + evals.FID_N)
+    monkeypatch.setattr(evals, "rows", lambda name: rows)
+    sets = evals.probe_sets(700, bands=(700,))
+    assert "val_T" in sets and "fid_T" in sets and "band_700" in sets
+    assert len(sets["val_T"]) == evals.VAL_N and len(sets["fid_T"]) == evals.FID_N

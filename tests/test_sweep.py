@@ -171,3 +171,20 @@ def test_the_setting_that_plays_a_target_is_read_off_a_noisy_curve_made_monotone
     setting, inside = pipeline.crossing([(900, 1050), (1000, 1120), (1100, 1100), (1200, 1300)], 1100)
     assert inside and abs(setting - 1025) < 1e-9
     assert pipeline.crossing([(900, 1200), (1000, 1300)], 1100) == (900, False)  # the grid never plays that weak
+
+
+def test_adaptive_reports_every_completed_game_to_an_overall_counter(monkeypatch):
+    ctx = pipeline.Ctx.__new__(pipeline.Ctx)
+    ctx.cfg, ctx.suite, ctx.elo = None, [[]] * 10, {"a": 1000, "b": 2000, "c": 3000, "d": 4000}
+    def run(cfg, model, policy, todo, *args, on_progress=None, **kwargs):
+        if on_progress:
+            for _ in todo:
+                on_progress()
+        return todo
+
+    monkeypatch.setattr(pipeline.gauntlet, "run", run)
+    monkeypatch.setattr(pipeline.gauntlet, "rate", lambda games, elo: 1000)
+    seen = []
+    ctx.adaptive(None, {"self_elo": 0, "oppo_elo": 0}, [1100], "scan", str, seed=1, n_main=2,
+                 on_progress=lambda: seen.append(1))
+    assert len(seen) == 52

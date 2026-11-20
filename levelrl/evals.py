@@ -27,13 +27,13 @@ def rows(name: str) -> list[dict]:
     return _rows[name]
 
 
-def probe_sets(T: int | None = None) -> dict[str, list[dict]]:
+def probe_sets(T: int | None = None, bands: tuple[int, ...] | None = None) -> dict[str, list[dict]]:
     # Fixed slices, so every checkpoint and the base model see the same positions. The 10k fidelity set comes from
     # the far end of the band file and never overlaps the per-band probe.
     s = {"calib": rows("calib")[:PROBE_N]}
-    for b in data.BANDS:
+    for b in bands or data.BANDS:
         s[f"band_{b}"] = rows(f"fid_{b}")[:BAND_N]
-    if T is not None and T in data.BANDS:
+    if T is not None and T in (bands or data.BANDS):
         # val_T is for choosing between checkpoints, fid_T is only ever reported. The band files hold one position
         # a game in month order, so the two slices share no game and come from different months.
         s["val_T"] = rows(f"fid_{T}")[BAND_N:BAND_N + VAL_N]

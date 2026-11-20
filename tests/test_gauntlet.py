@@ -55,6 +55,29 @@ def test_play_reports_zero_of_total_before_the_first_arena_step(monkeypatch):
     assert "starting" in kwargs["note"]
 
 
+def test_run_reports_each_completed_game_to_an_overall_counter(monkeypatch):
+    class Arena:
+        live = []
+
+        def __init__(self, *args, **kwargs):
+            self.calls = 0
+
+        def done(self):
+            self.calls += 1
+            return self.calls > 1
+
+        def step(self):
+            return [{"score": 1.0, "plies": 4}, {"score": 0.0, "plies": 6}]
+
+    seen = []
+    monkeypatch.setattr(gauntlet.arena, "Arena", Arena)
+    monkeypatch.setattr(gauntlet.progress, "tick", lambda *args, **kwargs: None)
+    cfg = type("Cfg", (), {"device": "cpu"})()
+    policy = {"history": True, "temp": 1.0, "top_p": 1.0, "self_elo": 1500, "oppo_elo": 1500}
+    gauntlet.run(cfg, object(), policy, [{}, {}], on_progress=lambda: seen.append(1))
+    assert seen == [1, 1]
+
+
 def test_each_row_can_be_sampled_at_its_own_temperature():
     gen = torch.Generator().manual_seed(0)
     logits = torch.tensor([[2.0, 1.0, 0.0]]).repeat(4000, 1)

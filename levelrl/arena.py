@@ -20,7 +20,7 @@ from levelrl import ladder, maia, progress
 
 _pool = None
 ENGINE_TIMEOUT = 60
-PROCS = 22  # of 24 threads: one stays free for this process and one for the GPU driver thread
+PROCS = int(os.environ.get("LEVELRL_PROCS", "22"))  # leave one process and the GPU driver thread free
 BSZ = int(os.environ.get("LEVELRL_ARENA_BSZ", 4 * PROCS))
 BATCH_WAIT = 0.01  # seconds to let more engine replies arrive, so Maia's forward is not run for one game at a time
 

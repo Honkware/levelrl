@@ -111,6 +111,7 @@ def test_mocked_full_workflow_is_resumable_and_writes_final_results(monkeypatch,
     monkeypatch.setattr(calibrate, "TEMP_GRID", (0.7, 1.0, 1.3))
     monkeypatch.setattr(calibrate, "VALIDATION_OPENINGS", 1)
     monkeypatch.setattr(calibrate.data, "BANDS", (1100,))
+    monkeypatch.setattr(calibrate, "has_fidelity", lambda T: T == 1100)
     monkeypatch.setattr(calibrate.gauntlet, "rate", lambda games, elo: games[0]["rating"])
     plays = []
 

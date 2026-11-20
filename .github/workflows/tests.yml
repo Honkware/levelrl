@@ -1,0 +1,30 @@
+name: tests
+
+on: [push, pull_request]
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The CPU wheel keeps the install small; nothing here touches a GPU.
+      - run: pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -r requirements.txt
+      - run: cargo build --release
+        working-directory: native
+      # These three load the Maia-3 checkpoint from Hugging Face or play games against Stockfish.
+      - run: python -m pytest -q --ignore tests/test_maia.py --ignore tests/test_hist.py --ignore tests/test_arena.py
+
+  native:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test

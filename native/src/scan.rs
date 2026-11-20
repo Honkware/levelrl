@@ -96,7 +96,7 @@ impl Visitor for Scan {
 
     fn begin_game(&mut self) {
         self.seen += 1;
-        if self.seen % 2_000_000 == 0 {
+        if self.seen.is_multiple_of(2_000_000) {
             let rate = self.seen as f64 / self.started.elapsed().as_secs_f64().max(0.001);
             eprintln!(
                 "{}: {}M games, {} rows, {:.0} games/s, rust",

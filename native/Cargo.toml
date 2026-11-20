@@ -2,10 +2,24 @@
 name = "levelrl-native"
 version = "0.1.0"
 edition = "2021"
+description = "Maia board features and Lichess PGN scan/band tools"
+license = "AGPL-3.0-only"
+readme = "README.md"
+include = ["src/**/*.rs", "Cargo.toml", "README.md", "LICENSE"]
 
 [lib]
 name = "levelrl_native"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+flate2 = "1"
+pgn-reader = "0.26.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+shakmaty = "0.27.3"
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
 cozy-chess = { version = "0.3.4", features = ["std", "pext"] }
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+cozy-chess = { version = "0.3.4", features = ["std"] }

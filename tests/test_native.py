@@ -1,3 +1,8 @@
+import gzip
+import json
+import subprocess
+from pathlib import Path
+
 import chess
 import pytest
 import torch
@@ -39,3 +44,32 @@ def test_persistent_native_board_matches_stateless_features_across_games():
                 assert torch.equal(mask, expected_mask)
         finally:
             native_board.close()
+
+
+def test_rust_scan_and_band_build_preserve_schema_and_all_bands(tmp_path):
+    from tests.test_data import GAME
+
+    scan = tmp_path / "data" / "scan" / "2026-03"
+    scan.mkdir(parents=True)
+    pgn = tmp_path / "games.pgn"
+    pgn.write_text("\n".join(GAME.format(late="0:02:35").replace("/abc", f"/g{i}") for i in range(60)))
+    archive = tmp_path / "games.zst"
+    subprocess.run(["zstd", "-q", "-o", str(archive), str(pgn)], check=True)
+    binary = Path(__file__).parent.parent / "native" / "target" / "release" / "scan"
+    subprocess.run(f"zstd -dc '{archive}' | '{binary}' --month 2026-03 --keep-bp 10000 --out '{scan}'",
+                   shell=True, check=True)
+    counts = json.loads((scan / "counts.json").read_text())
+    assert counts == {"a": 60, "b": 60}
+
+    band = Path(__file__).parent.parent / "native" / "target" / "release" / "band"
+    out = tmp_path / "positions"
+    subprocess.run([str(band), "--root", str(tmp_path), "--months", "2026-03", "--bands", "1450 1500",
+                    "--n-cal", "0", "--out", str(out)], check=True)
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["bands"] == [1450, 1500] and manifest["months"] == ["2026-03"]
+    for target, expected in ((1450, 60), (1500, 0)):
+        rows = [json.loads(line) for line in gzip.open(out / f"fid_{target}.jsonl.gz", "rt")]
+        assert len(rows) == expected
+        assert all({"site", "moves", "move", "elo", "oppo_elo", "white", "black", "tc", "month"} <= set(r)
+                   for r in rows)
+        assert all("-" not in move for r in rows for move in r["moves"] + [r["move"]])

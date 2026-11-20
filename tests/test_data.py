@@ -98,3 +98,34 @@ def test_the_mover_and_opponent_ratings_follow_the_side_to_move():
         row = data.pick(game(), random.Random(seed))
         white = len(row["moves"]) % 2 == 0
         assert (row["elo"], row["oppo_elo"]) == ((1500, 1480) if white else (1480, 1500))
+
+
+def test_native_scan_failure_is_explicit_instead_of_silently_falling_back(tmp_path, monkeypatch):
+    binary = tmp_path / "native" / "target" / "release" / "scan"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\nexit 3\n")
+    binary.chmod(0o755)
+    monkeypatch.setattr(data, "ROOT", tmp_path)
+    monkeypatch.setattr(data, "source", lambda month: "printf ''")
+    with pytest.raises(RuntimeError, match="native scan failed"):
+        data._native_scan("2026-03", 0, tmp_path / "scan" / "2026-03")
+
+
+def test_building_an_extra_band_preserves_existing_positions_and_manifest(tmp_path, monkeypatch):
+    monkeypatch.setattr(data, "ROOT", tmp_path)
+    scan_dir = tmp_path / "scan" / "2026-03"
+    scan_dir.mkdir(parents=True)
+    (scan_dir / "counts.json.gz").write_bytes(gzip.compress(json.dumps({"a": 60, "b": 60}).encode()))
+    row = {"site": "game", "moves": [], "move": "e2e4", "elo": 700, "oppo_elo": 700,
+           "white": "a", "black": "b", "tc": "180+0", "month": "2026-03"}
+    (scan_dir / "rows.jsonl.gz").write_bytes(gzip.compress((json.dumps(row) + "\n").encode()))
+    monkeypatch.setattr(data, "scan", lambda month, seed: scan_dir)
+    positions = tmp_path / "positions"
+    positions.mkdir()
+    (positions / "manifest.json").write_text(json.dumps({"bands": [1100], "months": ["2025-09"], "fid": {"1100": 50}}))
+    data.build(("2026-03",), bands=(700,))
+    assert (positions / "fid_700.jsonl.gz").exists()
+    assert not (positions / "calib.jsonl.gz").exists()
+    manifest = json.loads((positions / "manifest.json").read_text())
+    assert manifest["bands"] == [700, 1100] and manifest["fid"]["1100"] == 50
+    assert manifest["band_months"]["700"] == ["2026-03"]

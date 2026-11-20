@@ -1,0 +1,46 @@
+[
+ {
+  "arm": "T1100_goal50",
+  "eval": "50",
+  "kind": "judge gap",
+  "judge": [
+   -1.50293200725409,
+   -1.4145616736417461
+  ],
+  "human_sce": [
+   1.4324885727693326,
+   1.4473862094377983
+  ],
+  "entropy": 1.429337695786405,
+  "kl_base": 0.026953855533518256,
+  "threefold": 0.065,
+  "book": 0.56375,
+  "examples": [
+   "[Event \"LevelRL\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"sk0_r07\"]\n[Black \"policy@1100\"]\n[Result \"1-0\"]\n[Termination \"checkmate\"]\n\n1. e4 d5 2. exd5 Qxd5 3. Nc3 Qd8 4. Bc4 e6 5. d4 Bb4 6. Qg4 e5 7. Qxg7 exd4 8. Qxf7# 1-0",
+   "[Event \"LevelRL\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"sk0\"]\n[Black \"policy@1100\"]\n[Result \"1-0\"]\n[Termination \"checkmate\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. Bxc6 bxc6 5. Nxe5 Nxe4 6. O-O Bd6 7. Qg4 Nf6 8. Qxg7 Ke7 9. Qxf7# 1-0",
+   "[Event \"LevelRL\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"sk0_r07\"]\n[Black \"policy@1100\"]\n[Result \"0-1\"]\n[Termination \"checkmate\"]\n\n1. e4 c5 2. Nf3 Nc6 3. c3 d5 4. exd5 Qxd5 5. d4 Bg4 6. Nbd2 e6 7. Be2 Bxf3 8. gxf3 cxd4 9. O-O Bd6 10. Nc4 b5 11. Nd2 Qe5 12. h3 Qh2# 0-1"
+  ]
+ },
+ {
+  "arm": "T1100_goal75",
+  "eval": "50",
+  "kind": "judge gap",
+  "judge": [
+   -1.4520424132874719,
+   -1.386614935278736
+  ],
+  "human_sce": [
+   1.4484673154603807,
+   1.4667442768076435
+  ],
+  "entropy": 1.405066799129338,
+  "kl_base": 0.037193201321326655,
+  "threefold": 0.0725,
+  "book": 0.55125,
+  "examples": [
+   "[Event \"LevelRL\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"elo1320\"]\n[Black \"policy@1100\"]\n[Result \"1-0\"]\n[Termination \"checkmate\"]\n\n1. e4 c6 2. Nc3 d5 3. Nf3 dxe4 4. Nxe4 Nf6 5. Qe2 Bg4 6. d4 Nbd7 7. Nd6# 1-0",
+   "[Event \"LevelRL\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"policy@1100\"]\n[Black \"elo1320\"]\n[Result \"0-1\"]\n[Termination \"checkmate\"]\n\n1. e4 e5 2. Nc3 Nc6 3. Nf3 Nf6 4. d4 exd4 5. Nxd4 d5 6. Bg5 Bc5 7. Bxf6 Qxf6 8. Nxc6 Qxf2# 0-1",
+   "[Event \"LevelRL\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"sk0_r07\"]\n[Black \"policy@1100\"]\n[Result \"1-0\"]\n[Termination \"checkmate\"]\n\n1. e4 Nf6 2. e5 Nd5 3. c4 Nb6 4. c5 Nd5 5. d4 d6 6. Nf3 dxe5 7. Nxe5 Nf6 8. Be3 b6 9. Bc4 bxc5 10. Bxf7# 1-0"
+  ]
+ }
+]

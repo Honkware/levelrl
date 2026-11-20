@@ -1,0 +1,380 @@
+{
+ "complete": false,
+ "complete_targets": 5,
+ "total_targets": 21,
+ "targets": [
+  {
+   "target": 600,
+   "strength_ready": true,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "needs 16,000 rows",
+    "validation and final games overlap",
+    "validation and final months overlap"
+   ],
+   "selected": {
+    "method": "temperature",
+    "dial": 600,
+    "temp": 1.232,
+    "reaches": true
+   },
+   "elo": 596.4561332148733
+  },
+  {
+   "target": 700,
+   "strength_ready": true,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "needs 16,000 rows",
+    "validation and final games overlap",
+    "validation and final months overlap"
+   ],
+   "selected": {
+    "method": "repair",
+    "dial": 610,
+    "temp": 1.087,
+    "reaches": true
+   },
+   "elo": 747.7305735371006
+  },
+  {
+   "target": 800,
+   "strength_ready": false,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "strength error +52",
+    "needs 16,000 rows",
+    "validation and final games overlap",
+    "validation and final months overlap"
+   ],
+   "selected": {
+    "method": "repair",
+    "dial": 650,
+    "temp": 1.04,
+    "reaches": true
+   },
+   "elo": 851.5146557617884
+  },
+  {
+   "target": 900,
+   "strength_ready": false,
+   "fidelity_ready": true,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "strength error +91"
+   ],
+   "selected": {
+    "method": "repair",
+    "dial": 840,
+    "temp": 1.071,
+    "reaches": true
+   },
+   "elo": 991.1755278296105
+  },
+  {
+   "target": 1000,
+   "strength_ready": true,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "final fidelity/reference analysis missing"
+   ],
+   "selected": {
+    "method": "remap",
+    "dial": 740,
+    "temp": 1.0,
+    "reaches": true
+   },
+   "elo": 987.0677957501123
+  },
+  {
+   "target": 1100,
+   "strength_ready": true,
+   "fidelity_ready": true,
+   "map_exact": true,
+   "complete": true,
+   "reasons": [
+    "ready"
+   ],
+   "selected": {
+    "method": "temperature",
+    "dial": 1100,
+    "temp": 1.297,
+    "reaches": true
+   },
+   "elo": 1060.7390789103952
+  },
+  {
+   "target": 1200,
+   "strength_ready": true,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "final fidelity/reference analysis missing"
+   ],
+   "selected": {
+    "method": "remap",
+    "dial": 990,
+    "temp": 1.0,
+    "reaches": true
+   },
+   "elo": 1209.2582975441032
+  },
+  {
+   "target": 1300,
+   "strength_ready": true,
+   "fidelity_ready": true,
+   "map_exact": true,
+   "complete": true,
+   "reasons": [
+    "ready"
+   ],
+   "selected": {
+    "method": "temperature",
+    "dial": 1300,
+    "temp": 1.177,
+    "reaches": true
+   },
+   "elo": 1282.1217249839065
+  },
+  {
+   "target": 1400,
+   "strength_ready": true,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "final fidelity/reference analysis missing"
+   ],
+   "selected": {
+    "method": "remap",
+    "dial": 1250,
+    "temp": 1.0,
+    "reaches": true
+   },
+   "elo": 1381.6782174353038
+  },
+  {
+   "target": 1500,
+   "strength_ready": true,
+   "fidelity_ready": true,
+   "map_exact": true,
+   "complete": true,
+   "reasons": [
+    "ready"
+   ],
+   "selected": {
+    "method": "remap",
+    "dial": 1520,
+    "temp": 1.0,
+    "reaches": true
+   },
+   "elo": 1532.2438002754543
+  },
+  {
+   "target": 1600,
+   "strength_ready": true,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "final fidelity/reference analysis missing"
+   ],
+   "selected": {
+    "method": "remap",
+    "dial": 1600,
+    "temp": 1.0,
+    "reaches": true
+   },
+   "elo": 1556.8416394590913
+  },
+  {
+   "target": 1700,
+   "strength_ready": true,
+   "fidelity_ready": true,
+   "map_exact": true,
+   "complete": true,
+   "reasons": [
+    "ready"
+   ],
+   "selected": {
+    "method": "temperature",
+    "dial": 1700,
+    "temp": 0.996,
+    "reaches": true
+   },
+   "elo": 1665.6244430463098
+  },
+  {
+   "target": 1800,
+   "strength_ready": true,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "final fidelity/reference analysis missing"
+   ],
+   "selected": {
+    "method": "remap",
+    "dial": 1910,
+    "temp": 1.0,
+    "reaches": true
+   },
+   "elo": 1766.9228181122853
+  },
+  {
+   "target": 1900,
+   "strength_ready": true,
+   "fidelity_ready": true,
+   "map_exact": true,
+   "complete": true,
+   "reasons": [
+    "ready"
+   ],
+   "selected": {
+    "method": "combined",
+    "dial": 2010,
+    "temp": 0.895,
+    "reaches": true
+   },
+   "elo": 1913.9499951762068
+  },
+  {
+   "target": 2000,
+   "strength_ready": true,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "final fidelity/reference analysis missing"
+   ],
+   "selected": {
+    "method": "combined",
+    "dial": 2130,
+    "temp": 0.876,
+    "reaches": true
+   },
+   "elo": 1972.650577573822
+  },
+  {
+   "target": 2100,
+   "strength_ready": true,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "final fidelity/reference analysis missing"
+   ],
+   "selected": {
+    "method": "remap",
+    "dial": 2600,
+    "temp": 1.0,
+    "reaches": false
+   },
+   "elo": 2058.070725835177
+  },
+  {
+   "target": 2200,
+   "strength_ready": true,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "final fidelity/reference analysis missing"
+   ],
+   "selected": {
+    "method": "combined",
+    "dial": 2400,
+    "temp": 0.763,
+    "reaches": false
+   },
+   "elo": 2156.6697408785194
+  },
+  {
+   "target": 2300,
+   "strength_ready": true,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "final fidelity/reference analysis missing"
+   ],
+   "selected": {
+    "method": "temperature",
+    "dial": 2300,
+    "temp": 0.344,
+    "reaches": true
+   },
+   "elo": 2347.4759084187526
+  },
+  {
+   "target": 2400,
+   "strength_ready": false,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "strength error -78",
+    "needs 16,000 rows",
+    "validation and final games overlap",
+    "validation and final months overlap"
+   ],
+   "selected": {
+    "method": "repair",
+    "dial": 2460,
+    "temp": 0.51,
+    "reaches": true
+   },
+   "elo": 2322.19814627789
+  },
+  {
+   "target": 2500,
+   "strength_ready": false,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "strength error -85",
+    "needs 16,000 rows",
+    "validation and final games overlap",
+    "validation and final months overlap"
+   ],
+   "selected": {
+    "method": "temperature",
+    "dial": 2500,
+    "temp": 0.1,
+    "reaches": false
+   },
+   "elo": 2415.1882047895533
+  },
+  {
+   "target": 2600,
+   "strength_ready": false,
+   "fidelity_ready": false,
+   "map_exact": true,
+   "complete": false,
+   "reasons": [
+    "strength error -157",
+    "needs 16,000 rows",
+    "validation and final games overlap",
+    "validation and final months overlap"
+   ],
+   "selected": {
+    "method": "temperature",
+    "dial": 2600,
+    "temp": 0.1,
+    "reaches": false
+   },
+   "elo": 2442.5277892858544
+  }
+ ]
+}

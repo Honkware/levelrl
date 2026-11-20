@@ -1,0 +1,554 @@
+{
+ "units": "estimated Lichess blitz strength from the current fixed-node ladder calibration",
+ "interpolation": "exact measured settings only; unmeasured targets use the nearest measured configuration without claiming validation",
+ "validated": [
+  {
+   "target": 600,
+   "method": "temperature",
+   "dial": 600,
+   "temp": 1.232,
+   "measured_elo": 596.4561332148733,
+   "elo_ci": [
+    557.3214356323635,
+    635.766677010836
+   ],
+   "elo_ci_units": [
+    496.31304360543385,
+    696.5992228243127
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 700,
+   "method": "repair",
+   "dial": 610,
+   "temp": 1.087,
+   "measured_elo": 747.7305735371006,
+   "elo_ci": [
+    709.6898992494102,
+    788.178868824619
+   ],
+   "elo_ci_units": [
+    659.3946313462014,
+    836.0665157279997
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 800,
+   "method": "repair",
+   "dial": 650,
+   "temp": 1.04,
+   "measured_elo": 851.5146557617884,
+   "elo_ci": [
+    814.1616211481946,
+    887.390871505808
+   ],
+   "elo_ci_units": [
+    772.0296613320725,
+    930.9996501915043
+   ],
+   "strength_in_band": false,
+   "validated": true
+  },
+  {
+   "target": 900,
+   "method": "repair",
+   "dial": 840,
+   "temp": 1.071,
+   "measured_elo": 991.1755278296105,
+   "elo_ci": [
+    952.3277564139296,
+    1033.5815120766415
+   ],
+   "elo_ci_units": [
+    919.0069116884924,
+    1063.3441439707285
+   ],
+   "strength_in_band": false,
+   "validated": true
+  },
+  {
+   "target": 1000,
+   "method": "remap",
+   "dial": 740,
+   "temp": 1.0,
+   "measured_elo": 987.0677957501123,
+   "elo_ci": [
+    948.3638707055275,
+    1024.1033699930674
+   ],
+   "elo_ci_units": [
+    916.1555851349661,
+    1057.9800063652583
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 1100,
+   "method": "temperature",
+   "dial": 1100,
+   "temp": 1.297,
+   "measured_elo": 1060.7390789103952,
+   "elo_ci": [
+    1022.5022919048668,
+    1097.6768771696454
+   ],
+   "elo_ci_units": [
+    994.431876072262,
+    1127.0462817485284
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 1200,
+   "method": "remap",
+   "dial": 990,
+   "temp": 1.0,
+   "measured_elo": 1209.2582975441032,
+   "elo_ci": [
+    1173.6731626902285,
+    1244.9940184968186
+   ],
+   "elo_ci_units": [
+    1151.5836903203103,
+    1266.9329047678962
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 1300,
+   "method": "temperature",
+   "dial": 1300,
+   "temp": 1.177,
+   "measured_elo": 1282.1217249839065,
+   "elo_ci": [
+    1246.6025200120214,
+    1319.0158608719175
+   ],
+   "elo_ci_units": [
+    1226.8289644166368,
+    1337.414485551176
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 1400,
+   "method": "remap",
+   "dial": 1250,
+   "temp": 1.0,
+   "measured_elo": 1381.6782174353038,
+   "elo_ci": [
+    1346.241644415672,
+    1416.0345859467575
+   ],
+   "elo_ci_units": [
+    1329.7184040045022,
+    1433.6380308661055
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 1500,
+   "method": "remap",
+   "dial": 1520,
+   "temp": 1.0,
+   "measured_elo": 1532.2438002754543,
+   "elo_ci": [
+    1497.319056952375,
+    1567.1965531195247
+   ],
+   "elo_ci_units": [
+    1480.7905846703552,
+    1583.6970158805534
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 1600,
+   "method": "remap",
+   "dial": 1600,
+   "temp": 1.0,
+   "measured_elo": 1556.8416394590913,
+   "elo_ci": [
+    1522.5872691869904,
+    1592.757073411884
+   ],
+   "elo_ci_units": [
+    1504.995444905957,
+    1608.6878340122257
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 1700,
+   "method": "temperature",
+   "dial": 1700,
+   "temp": 0.996,
+   "measured_elo": 1665.6244430463098,
+   "elo_ci": [
+    1627.6860932105187,
+    1703.715545290917
+   ],
+   "elo_ci_units": [
+    1609.329245265108,
+    1721.9196408275116
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 1800,
+   "method": "remap",
+   "dial": 1910,
+   "temp": 1.0,
+   "measured_elo": 1766.9228181122853,
+   "elo_ci": [
+    1734.1792591204753,
+    1803.0664387553375
+   ],
+   "elo_ci_units": [
+    1709.0126793770396,
+    1824.832956847531
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 1900,
+   "method": "combined",
+   "dial": 2010,
+   "temp": 0.895,
+   "measured_elo": 1913.9499951762068,
+   "elo_ci": [
+    1879.3582889749155,
+    1947.3722649909737
+   ],
+   "elo_ci_units": [
+    1848.3692002742575,
+    1979.530790078156
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 2000,
+   "method": "combined",
+   "dial": 2130,
+   "temp": 0.876,
+   "measured_elo": 1972.650577573822,
+   "elo_ci": [
+    1938.6095702187554,
+    2006.5090964486453
+   ],
+   "elo_ci_units": [
+    1903.3865140308549,
+    2041.914641116789
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 2100,
+   "method": "remap",
+   "dial": 2600,
+   "temp": 1.0,
+   "measured_elo": 2058.070725835177,
+   "elo_ci": [
+    2024.6841341628297,
+    2091.5833552746394
+   ],
+   "elo_ci_units": [
+    1983.2056173910541,
+    2132.9358342793003
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 2200,
+   "method": "combined",
+   "dial": 2400,
+   "temp": 0.763,
+   "measured_elo": 2156.6697408785194,
+   "elo_ci": [
+    2123.6640572890506,
+    2190.420827518888
+   ],
+   "elo_ci_units": [
+    2074.5924552738124,
+    2238.7470264832264
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 2300,
+   "method": "temperature",
+   "dial": 2300,
+   "temp": 0.344,
+   "measured_elo": 2347.4759084187526,
+   "elo_ci": [
+    2318.761965170962,
+    2376.511017895998
+   ],
+   "elo_ci_units": [
+    2251.7633002642688,
+    2443.1885165732365
+   ],
+   "strength_in_band": true,
+   "validated": true
+  },
+  {
+   "target": 2400,
+   "method": "repair",
+   "dial": 2460,
+   "temp": 0.51,
+   "measured_elo": 2322.19814627789,
+   "elo_ci": [
+    2289.944432925532,
+    2353.3508920088047
+   ],
+   "elo_ci_units": [
+    2227.6693439097403,
+    2416.7269486460395
+   ],
+   "strength_in_band": false,
+   "validated": true
+  },
+  {
+   "target": 2500,
+   "method": "temperature",
+   "dial": 2500,
+   "temp": 0.1,
+   "measured_elo": 2415.1882047895533,
+   "elo_ci": [
+    2381.11215352683,
+    2448.7970132825435
+   ],
+   "elo_ci_units": [
+    2312.269076109746,
+    2518.1073334693606
+   ],
+   "strength_in_band": false,
+   "validated": true
+  },
+  {
+   "target": 2600,
+   "method": "temperature",
+   "dial": 2600,
+   "temp": 0.1,
+   "measured_elo": 2442.5277892858544,
+   "elo_ci": [
+    2409.1381946471624,
+    2475.687347190174
+   ],
+   "elo_ci_units": [
+    2337.5032244837157,
+    2547.552354087993
+   ],
+   "strength_in_band": false,
+   "validated": true
+  }
+ ],
+ "settings": [
+  {
+   "target": 600,
+   "method": "temperature",
+   "dial": 600,
+   "temp": 1.232,
+   "nearest_target": 600,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 700,
+   "method": "repair",
+   "dial": 610,
+   "temp": 1.087,
+   "nearest_target": 700,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 800,
+   "method": "repair",
+   "dial": 650,
+   "temp": 1.04,
+   "nearest_target": 800,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 900,
+   "method": "repair",
+   "dial": 840,
+   "temp": 1.071,
+   "nearest_target": 900,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 1000,
+   "method": "remap",
+   "dial": 740,
+   "temp": 1.0,
+   "nearest_target": 1000,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 1100,
+   "method": "temperature",
+   "dial": 1100,
+   "temp": 1.297,
+   "nearest_target": 1100,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 1200,
+   "method": "remap",
+   "dial": 990,
+   "temp": 1.0,
+   "nearest_target": 1200,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 1300,
+   "method": "temperature",
+   "dial": 1300,
+   "temp": 1.177,
+   "nearest_target": 1300,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 1400,
+   "method": "remap",
+   "dial": 1250,
+   "temp": 1.0,
+   "nearest_target": 1400,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 1500,
+   "method": "remap",
+   "dial": 1520,
+   "temp": 1.0,
+   "nearest_target": 1500,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 1600,
+   "method": "remap",
+   "dial": 1600,
+   "temp": 1.0,
+   "nearest_target": 1600,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 1700,
+   "method": "temperature",
+   "dial": 1700,
+   "temp": 0.996,
+   "nearest_target": 1700,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 1800,
+   "method": "remap",
+   "dial": 1910,
+   "temp": 1.0,
+   "nearest_target": 1800,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 1900,
+   "method": "combined",
+   "dial": 2010,
+   "temp": 0.895,
+   "nearest_target": 1900,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 2000,
+   "method": "combined",
+   "dial": 2130,
+   "temp": 0.876,
+   "nearest_target": 2000,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 2100,
+   "method": "remap",
+   "dial": 2600,
+   "temp": 1.0,
+   "nearest_target": 2100,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 2200,
+   "method": "combined",
+   "dial": 2400,
+   "temp": 0.763,
+   "nearest_target": 2200,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 2300,
+   "method": "temperature",
+   "dial": 2300,
+   "temp": 0.344,
+   "nearest_target": 2300,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 2400,
+   "method": "repair",
+   "dial": 2460,
+   "temp": 0.51,
+   "nearest_target": 2400,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 2500,
+   "method": "temperature",
+   "dial": 2500,
+   "temp": 0.1,
+   "nearest_target": 2500,
+   "interpolated": false,
+   "extrapolated": false
+  },
+  {
+   "target": 2600,
+   "method": "temperature",
+   "dial": 2600,
+   "temp": 0.1,
+   "nearest_target": 2600,
+   "interpolated": false,
+   "extrapolated": false
+  }
+ ]
+}

@@ -3,7 +3,7 @@
 # first two runs trained on code that was not committed at the time, so their results cannot be traced to a commit.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-host="${1:-gpu-box}"
+host="${1:-${LEVELRL_HOST:?usage: scripts/deploy.sh HOST, or set LEVELRL_HOST}}"
 if [ -n "$(git status --porcelain)" ]; then
     echo "uncommitted changes, commit first:"; git status --short; exit 1
 fi

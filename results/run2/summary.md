@@ -1,6 +1,6 @@
 # LevelRL results
 
-Units: Lichess blitz = -803 + 1.528 x ladder (affine fit, slope 95% CI 1.369 to 1.677), snapshot data/anchors/lichess_maia3_calibration_20261110T013039Z.json. Every Elo interval below is the gauntlet's bootstrap interval carried through this fit. It leaves out the uncertainty of the fit itself, so absolute Lichess numbers are looser than the intervals read, while differences between arms at one target are not affected much.
+Units: Lichess blitz = -803 + 1.528 x ladder (affine fit, slope 95% CI 1.369 to 1.677), from the bot ratings read on 2026-11-10. Every Elo interval below is the gauntlet's bootstrap interval carried through this fit. It leaves out the uncertainty of the fit itself, so absolute Lichess numbers are looser than the intervals read, while differences between arms at one target are not affected much.
 
 ## Anchors
 

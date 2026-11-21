@@ -2,9 +2,7 @@
 
 # LevelRL results
 
-Code: commit d0768cb79c99cb203a1c6f3fafa25cd381f768ef.
-
-Units: Lichess blitz = -766 + 1.496 x ladder (affine fit, slope 95% CI 1.341 to 1.643), snapshot data/anchors/lichess_maia3_calibration_20261110T071547Z.json. Elo intervals marked "in run" are the gauntlet's bootstrap interval carried through this fit, which is what compares arms with each other. Those marked "with units" add the fit's own uncertainty, which is what an absolute Lichess number carries. The fit is only tested on Maia-3 players: see the cross-check.
+Units: Lichess blitz = -766 + 1.496 x ladder (affine fit, slope 95% CI 1.341 to 1.643), from the bot ratings read on 2026-11-10. Elo intervals marked "in run" are the gauntlet's bootstrap interval carried through this fit, which is what compares arms with each other. Those marked "with units" add the fit's own uncertainty, which is what an absolute Lichess number carries. The fit is only tested on Maia-3 players: see the cross-check.
 
 ## Anchors
 

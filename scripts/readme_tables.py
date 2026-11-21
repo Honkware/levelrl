@@ -4,9 +4,8 @@ import json
 import sys
 from pathlib import Path
 
-# Tables in the README, rebuilt from results/runN. The confirmation gauntlet size is not stored in the result
-# files: finish_arm played suite[:200] once with both colours in run 1 (commit d45b763) and twice in run 2
-# (commit 9f93035). Move-match is on the last 10,000 positions of fid_T (evals.FID_N) in both runs.
+# Prints the run 1 and run 2 tables from results/runN. The confirmation gauntlet size is not stored in the result
+# files: finish_arm played suite[:200] once with both colours in run 1 and twice in run 2. Move-match is on the last 10,000 positions of fid_T (evals.FID_N) in both runs.
 CONFIRM = {"run1": 400, "run2": 800}
 FID_N = 10_000
 ROOT = Path(__file__).resolve().parent.parent / "results"

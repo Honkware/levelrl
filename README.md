@@ -2,7 +2,7 @@
 
 [Maia-3](https://github.com/CSSLab/maia3) is a chess model from the CSSLab that takes a rating as input and plays like a human at that rating. The rating you give it and the strength you get are different, though. The Maia-3 bots on Lichess that are set to 600, 800 and 1000 have blitz ratings of 890, 1111 and 1289.
 
-This repo measures that gap across the whole range and gives you the settings that close it. For each target rating from 600 to 2600 it has a dial value and a sampling temperature, found by search and then confirmed over 760 games on fresh openings. With those settings Maia-3 plays within 50 Elo of the rating you ask for at 16 of the 21 targets, with no training.
+This repo measures that gap across the whole range and gives you the settings that close it. For each target rating from 600 to 2600 it has a dial value and a sampling temperature, found by search and then confirmed over 760 games on fresh openings. With those settings the measured rating lands within 50 Elo of the one you ask for at 16 of the 21 targets, with no training.
 
 | asked for | dial | temperature | plays at | off by |
 |---|---|---|---|---|
@@ -57,7 +57,7 @@ I started this project to do the same job with RL, by fine-tuning Maia-3 with GR
 | temperature 1.25, no training | 1078 | -22 |
 | GRPO, last checkpoint | 1132 | +32 |
 
-Training took about 1,500 to 3,500 games per arm and gives one checkpoint for one rating. In the second run it also lost between 0.8 and 5 points of human move-match. Calibration reaches the same ratings from the released weights, so that is what I'd use.
+Training took about 1,500 to 3,500 games per arm and gives one checkpoint for one rating. In the second run the arms that reached their target also lost between 0.8 and 5 points of human move-match. Calibration reaches the same ratings from the released weights, so that is what I'd use.
 
 ## How the ratings are measured
 
@@ -65,15 +65,17 @@ The model plays a gauntlet against Stockfish 19 at fixed node counts. The result
 
 ## Rerunning it
 
-Training and the sweep need a CUDA GPU (I used one RTX 4090), Stockfish 19 on the path and a month of games from database.lichess.org.
+Training and the sweep need a CUDA GPU (I used one RTX 4090), along with Stockfish 19, tmux, zstd and curl. The data step downloads three months of games from database.lichess.org.
 
 ```
-pip install -r requirements.txt
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
 (cd native && cargo build --release)
-python -m levelrl.data --scan 2026-03
+mkdir -p runs
+.venv/bin/python -m levelrl.data
 scripts/run_pipeline.sh
-python -m pytest -q
 ```
+
+The tests don't need a GPU or the data, and run with `python -m pytest -q`.
 
 ## What's in the repo
 

@@ -1,0 +1,3 @@
+# cozy-chess is built with pext on x86_64, which needs BMI2
+[build]
+rustflags = ["-C", "target-cpu=native"]

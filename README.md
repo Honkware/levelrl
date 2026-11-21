@@ -32,17 +32,20 @@ The five targets outside 50 Elo are 800, 900 and everything from 2400 up. The to
 
 ## Using it
 
-The table is saved as `results/calibration/calibration_map.json`, and `maia_calibrate` reads it. It has no dependencies and needs no GPU.
+The table ships with the `maia-calibrate` package, which has no dependencies and needs no GPU.
+
+```sh
+pip install maia-calibrate
+```
 
 ```python
-from maia_calibrate import load_map
+from maia_calibrate import maia3_79m
 
-settings = load_map("results/calibration/calibration_map.json")
-s = settings.lookup(1500).setting
+s = maia3_79m().lookup(1500).setting
 print(s.dial, s.temp)   # 1520 1.0
 ```
 
-A rating between two measured targets gets the nearest measured setting and is marked as not validated.
+Pass `s.dial` to Maia-3 as the rating for both players and sample moves at `s.temp`. A rating between two measured targets gets the nearest measured setting and is marked as not validated.
 
 ## Calibration compared with RL fine-tuning
 

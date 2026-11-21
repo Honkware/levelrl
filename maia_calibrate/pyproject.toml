@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "maia-calibrate"
 version = "0.1.0"
-description = "Validated Maia dial and temperature calibration maps"
+description = "Measured dial and temperature settings that make Maia-3 play at a target rating"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-only"
@@ -18,3 +18,6 @@ classifiers = [
 [tool.setuptools]
 packages = ["maia_calibrate"]
 package-dir = {maia_calibrate = "."}
+
+[tool.setuptools.package-data]
+maia_calibrate = ["maia3_79m.json"]

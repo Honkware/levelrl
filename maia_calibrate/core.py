@@ -313,6 +313,11 @@ def load_map(path: str | Path) -> CalibrationMap:
     return CalibrationMap.from_dict(payload)
 
 
+def maia3_79m() -> CalibrationMap:
+    # the map measured for Maia3-79M, shipped with the package (results/calibration in the repo)
+    return load_map(Path(__file__).with_name("maia3_79m.json"))
+
+
 def save_map(calibration: CalibrationMap, path: str | Path) -> None:
     if not isinstance(calibration, CalibrationMap):
         raise TypeError("calibration must be a CalibrationMap")

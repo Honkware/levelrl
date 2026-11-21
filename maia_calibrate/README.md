@@ -1,16 +1,15 @@
 # maia-calibrate
 
-Maia-3 takes a rating as input, but the strength it plays at can be 200 Elo or more away from it. This package reads the dial and sampling temperature measured for each target rating from 600 to 2600, so you can look up the setting that actually plays at the rating you want. It is a lookup table with a small API around it. It has no dependencies and doesn't load the model.
+Maia-3 takes a rating as input, but the strength it plays at can be 200 Elo or more away from it. This package ships the dial and sampling temperature I measured for each target rating from 600 to 2600, so you can look up the setting that actually plays at the rating you want. It is a lookup table with a small API around it. It has no dependencies and doesn't load the model.
 
 ```sh
-python -m pip install ./maia_calibrate
+pip install maia-calibrate
 ```
 
 ```python
-from maia_calibrate import load_map
+from maia_calibrate import maia3_79m
 
-settings = load_map("results/calibration/calibration_map.json")
-s = settings.lookup(1500).setting
+s = maia3_79m().lookup(1500).setting
 print(s.dial, s.temp)   # 1520 1.0
 ```
 
@@ -19,7 +18,7 @@ Pass `s.dial` to Maia-3 as the rating for both players and sample moves at `s.te
 `lookup` returns the measured setting when the target is one of the 21 that were measured (every 100 from 600 to 2600). For anything in between it returns the nearest measured setting with `validated=False`, and it doesn't interpolate.
 
 ```python
-r = settings.lookup(1950)
+r = maia3_79m().lookup(1950)
 print(r.setting.dial, r.validated, r.nearest)   # 2010 False True
 ```
 

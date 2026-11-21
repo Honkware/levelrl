@@ -12,6 +12,7 @@ from maia_calibrate import (
     UnsupportedSchemaVersion,
     UnsupportedTargetError,
     load_map,
+    maia3_79m,
     nearest_measured,
     save_map,
     select,
@@ -163,3 +164,11 @@ def test_unsupported_schema_version_is_explicit():
 def test_setting_validates_model_ranges(dial, temp):
     with pytest.raises(MapValidationError):
         Setting("temperature", dial, temp)
+
+
+def test_the_shipped_map_matches_the_measured_one_in_results():
+    from pathlib import Path
+
+    measured = load_map(Path(__file__).resolve().parent.parent / "results" / "calibration" / "calibration_map.json")
+    assert maia3_79m().to_dict() == measured.to_dict()
+    assert maia3_79m().lookup(1500).setting.dial == 1520

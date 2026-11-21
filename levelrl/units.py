@@ -7,7 +7,7 @@ from pathlib import Path
 # Ladder Elo to Lichess blitz Elo, fitted on the maia3-79m bots: each dial's ladder Elo (from a gauntlet played
 # the way the bots sample) against its Lichess rating in one snapshot. Each point is weighted by its ladder
 # standard error and its Lichess RD, with RD floored at 150 from 2200 up since those accounts are provisional.
-# The spec asks for a constant offset. The first ladder came out compressed at 50 ms a move (nominal 1320-2500 spans
+# The plan was a constant offset. The first ladder came out compressed at 50 ms a move (nominal 1320-2500 spans
 # ~730 points), so a slope is fitted too, and the slope is used when its 95% interval excludes 1.
 
 PROVISIONAL_FROM, PROVISIONAL_SD = 2200, 150.0

@@ -16,7 +16,7 @@ import chess.engine
 from levelrl import openings, progress
 
 # Stockfish 19 rungs. Its strength limit stops at 1320, so the rungs below that are Skill 0 playing a uniformly
-# random legal move with probability p, as the spec asks. One thread, a small fixed hash and a fixed move time,
+# random legal move with probability p. One thread, a small fixed hash and a fixed move time,
 # all written into elo_calibration.json so the ladder can be rebuilt exactly.
 ENGINE = {"Threads": 1, "Hash": 16}
 # A rung searches a fixed number of nodes per move, so it plays the same at any CPU load and on any machine. The
